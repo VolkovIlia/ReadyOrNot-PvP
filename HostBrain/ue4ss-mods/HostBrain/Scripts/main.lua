@@ -24,6 +24,7 @@
 --   comp_modes                  list PvP mode aliases
 --   comp_status                 log mode, match state, guards and hit validation
 --   comp_hitvalidation <0|1>    switch server-side hit validation
+--   comp_maxplayers [n]         player cap of the lobbies the host creates from now on (default 10)
 --   comp_play_suspect [map] [n] solo match: you are a suspect, the AI SWAT squad of a co-op mission
 --                               storms the building; rounds until one side has n wins (default 3)
 --   comp_round_time <s> [prep]  assault time to survive (default 240) and preparation (default 20)
@@ -44,6 +45,7 @@ local NativeLog = NativeDir .. "\\RonCompNative.log"
 local Config = {
     DefaultMode = "ff",
     HitValidation = true,
+    LobbyCap = 10, -- 5v5; the game's default is 5
 }
 
 -- Shortcuts for comp_start; any level name (e.g. RoN_Campus_Core) is accepted as well.
@@ -234,6 +236,32 @@ local function ApplyHitValidation(enabled)
     return true
 end
 
+---------------------------------------------------------------- lobby cap
+
+-- UEOSMultiplayerSubsystem keeps the cap (5 from its constructor) and creates every lobby with it as
+-- NumPublicConnections; the host's PreLogin answers "Server is full!" from that session setting, and
+-- EOS caps the lobby members the same way. EOSMultiplayerStatics::SetMaxPlayers (also the console's
+-- ConsoleSetMaxPlayers) is its only writer and changes no lobby that already exists.
+-- GameSession.MaxPlayers is 16, so caps above 16 would need more than this.
+local StaticsPath = "/Script/ReadyOrNot.Default__EOSMultiplayerStatics"
+local MaxLobbyCap = 16
+
+local function ApplyLobbyCap()
+    local statics = StaticFindObject(StaticsPath)
+    local context = UEHelpers.GetPlayerController()
+    if not Valid(statics) or not Valid(context) then return nil end
+    local current = statics:GetMaxPlayers(context)
+    if current == Config.LobbyCap then return current end
+    statics:SetMaxPlayers(context, Config.LobbyCap)
+    local applied = statics:GetMaxPlayers(context)
+    local kismet = UEHelpers.GetKismetSystemLibrary()
+    local world = UEHelpers.GetWorld()
+    local hosting = Valid(kismet) and kismet:IsServer(world) and not kismet:IsStandalone(world)
+    Log("lobby cap %d -> %d for lobbies created from now on%s", current, applied,
+        hosting and "; the lobby that is already open keeps its cap until it is created again" or "")
+    return applied
+end
+
 ---------------------------------------------------------------- commands
 
 local function ResolveMap(name)
@@ -298,6 +326,9 @@ local function Status(out)
     local settings = StaticFindObject(HitSettingsPath)
     out(string.format("guards: %s, suspect RPC filter: %s, hit validation: %s", State.GuardsInstalled and "installed" or "NOT installed",
         State.FilterInstalled and "installed" or "NOT installed", Valid(settings) and tostring(settings.bEnableValidation) or "?"))
+    local statics = StaticFindObject(StaticsPath)
+    local context = UEHelpers.GetPlayerController()
+    out(string.format("lobby cap: %s (setting %d)", Valid(statics) and Valid(context) and tostring(statics:GetMaxPlayers(context)) or "?", Config.LobbyCap))
     Solo.Status(out)
     Pvp.Status(out)
 end
@@ -324,6 +355,15 @@ Register("comp_hitvalidation", function(parts, out)
     Config.HitValidation = parts[1] ~= "0"
     ApplyHitValidation(Config.HitValidation)
     out("hit validation " .. (Config.HitValidation and "ON" or "OFF"))
+end)
+Register("comp_maxplayers", function(parts, out)
+    local cap = tonumber(parts[1] or "")
+    if parts[1] and (not cap or cap < 2 or cap > MaxLobbyCap or cap % 1 ~= 0) then
+        out(string.format("usage: comp_maxplayers [2..%d]", MaxLobbyCap))
+        return
+    end
+    Config.LobbyCap = cap or Config.LobbyCap
+    out(string.format("lobby cap: %s; it applies to lobbies created from now on", tostring(ApplyLobbyCap())))
 end)
 Register("comp_maps", function(_, out)
     local names = {}
@@ -366,6 +406,7 @@ local function Tick()
         ApplyHitValidation(Config.HitValidation)
     end
     C.TrackWorld()
+    ApplyLobbyCap()
     if not State.FilterInstalled then InstallRpcFilter() end
     Solo.Tick()
     local ok, err = pcall(Pvp.Tick)

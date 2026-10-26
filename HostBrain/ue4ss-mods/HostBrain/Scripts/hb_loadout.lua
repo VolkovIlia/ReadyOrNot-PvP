@@ -163,6 +163,27 @@ local function EquipSuspectKit(pawn, primaryName, secondaryName)
     return true
 end
 
+-- The game's suspect clothes for players (CoopGM.SuspectPlayerCustomizationOverride, the hidden co-op
+-- PvP outfit) through the replicated PlayerState.Customization; bForceLiveUpdate re-dresses the
+-- living character. The player's saved customization is not touched: the next mission's PlayerState
+-- starts from it again.
+local OutfitFields = { "Character", "Voice", "Helmet", "Shirt", "Pants", "Shoes", "Eyewear", "Belt", "Gloves", "Watch", "Tattoo" }
+
+local function ApplySuspectOutfit(playerState, gameMode)
+    if not Valid(gameMode) then return false end
+    local ok, err = pcall(function()
+        local source = gameMode.SuspectPlayerCustomizationOverride
+        local outfit = {}
+        for _, field in ipairs(OutfitFields) do
+            local value = source[field]
+            if Valid(value) then outfit[field] = value end
+        end
+        playerState:Server_SetCustomization(outfit, true)
+    end)
+    if not ok then Log("suspect outfit failed: %s", tostring(err)) end
+    return ok
+end
+
 -- Items a suspect must not carry: the SWAT kit's grenades, devices (zip cuffs, multitool, C2, tablet,
 -- detonator, chem lights), the mirror gun, launchers and facewear.
 local SwatGear = { "^Grenade_", "^Device_", "^DevicesDetonator", "^Mirrorgun", "^BP_Facewear", "^Launcher_", "^Optiwand" }
@@ -187,5 +208,6 @@ end
 L.SuspectPrimaries, L.SuspectSecondaries = SuspectPrimaries, SuspectSecondaries
 L.PlayerWeapon, L.WeaponTitle, L.FillMagazines, L.EquipSuspectLoadout = PlayerWeapon, WeaponTitle, FillMagazines, EquipSuspectLoadout
 L.GunsFor, L.PrepareSuspectSpawn, L.EquipSuspectKit, L.StripSwatGear = GunsFor, PrepareSuspectSpawn, EquipSuspectKit, StripSwatGear
+L.ApplySuspectOutfit = ApplySuspectOutfit
 
 return L

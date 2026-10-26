@@ -370,8 +370,16 @@ Ghidra по UE4SS.dll: `tools/ghidra_decompile.ps1 -Binary ...\ue4ss\UE4SS.dll -
   - автораспределение по командам при входе (`FUN_144ea4940`) выключено.
 - **ИИ флаг не трогает.** `IsCharacterEnemy` у ИИ SWAT, ИИ-подозреваемых и гражданских с флагом и без одинаков:
   ИИ SWAT не стреляют в гражданских.
-- **Отряд ИИ SWAT есть только в одиночной миссии.** В `open <map>?listen?game=BS_COOP` (хост-сервер) нет ни одного
-  `CyberneticsSwat_V2_C`, и не важно, игрок хоста за SWAT или нет и стоит ли флаг.
+- **Отряд ИИ SWAT штатно есть только в одиночной миссии.** Старт миссии (`FUN_144c05e10`) создаёт отряд
+  (`FUN_144c02290`), только если выполнены все условия:
+  - людей меньше двух;
+  - сервер не выделенный;
+  - у скрипта уровня стоит флаг `+0xcbe`;
+  - у мира нет `NetDriver` (`world+0x38 == 0`).
+
+  Обход — консольная переменная `a.RonSpawnSwatInIncompatibleMode` (её описание в exe: «always spawn the swat… even
+  if… multiplayer»). Она не помечена `ECVF_Cheat`, `Exec` с хоста её ставит. Проверено: в сетевой миссии при
+  значении 1 появляются 4 `CyberneticsSwat_V2_C`, и флаг PvP их не убирает.
 - **Старт миссии.** Отряд ИИ создаётся вокруг пешки игрока 0 (`ACoopGM`, `FUN_144c02290`: `defaultblueone`…`trailer`,
   `&ACoopGM::FriendlyAIKilled`). Если у хоста нет пешки (команда 3 до спавна), запасная ветка вызывает нулевой
   указатель, и игра падает. Без флага та же команда 3 давала фатал «Couldn't spawn player»; с флагом пешки просто нет.
@@ -392,6 +400,13 @@ Ghidra по UE4SS.dll: `tools/ghidra_decompile.ps1 -Binary ...\ue4ss\UE4SS.dll -
 - `CoopGM::MissionEnd(bSuccess)` открывает штатный экран итогов («НЕ ПРОЙДЕНО» при `false`).
 - `CoopGM.bOverrideSuspectCustomizationInPvp = true`, `SuspectPlayerCustomizationOverride` — штатная одежда игрока-подозреваемого:
   `CSK_RapidResponse_Shirt_Buttoned`, `CSK_DETE_Pants`, `CSK_Swat_NoGlove`.
+  - Сама игра её не применяет. HostBrain переносит заданные поля в `ReadyOrNotPlayerState::Server_SetCustomization`
+    с `bForceLiveUpdate = true`.
+  - Реализация (`vtable+0x7e8` → `0x144a43d20`) пишет `PlayerState.Customization` (`+0xd40`) и при живом
+    обновлении переодевает персонажа (`+0x730`). В сохранение профиля она не пишет: следующая миссия начинается
+    с собственной одежды игрока.
+  - Проверено на хосте: голые руки, рубашка и брюки подозреваемого. Шлем, обувь и слот часов (`CBP_Handcuff`)
+    остаются из профиля: в образце их нет.
 
 **Фильтр SWAT-действий (RonCompNative).** Подменяет `UFunction::Func` у серверных RPC. Найденная раскладка:
 - `UFunction::Func` = `+0xd8` (единственный указатель в `.text`);
@@ -414,7 +429,37 @@ Ghidra по UE4SS.dll: `tools/ghidra_decompile.ps1 -Binary ...\ue4ss\UE4SS.dll -
 - после смерти создаёт игрока через `SpawnPlayerCharacter` на месте другого ИИ;
 - завершает миссию через `MissionEnd`.
 
-С ботами в сетевой игре режим работает без ИИ-отряда: штатно его нет.
+С ботами HostBrain на старте миссии ставит `a.RonSpawnSwatInIncompatibleMode 1` и снимает его, когда отряд
+появился (или через 30 с). Отряд ходит за хостом, поэтому боты возможны, только когда хост играет за SWAT.
+
+## Лимит лобби: 5 → 10 (26.10.2026)
+
+Наблюдение (декомпиляция, проверка значения в игре):
+- **Лимит хранит `UEOSMultiplayerSubsystem`** (подсистема `GameInstance`), нерефлектированное поле `+0xac`.
+  - Конструктор (`0x144826dd0`) ставит 5.
+  - Других записей нет, кроме `EOSMultiplayerStatics::SetMaxPlayers` (`0x144829ab0` → `0x144f07710`).
+    Её же вызывает консольная `ReadyOrNotPlayerController::ConsoleSetMaxPlayers` (`Exec`).
+  - Ни один Blueprint, загруженный при снятии JMAP (в том числе `W_MainMenu_V3`), не вызывает `SetMaxPlayers` и
+    `GetMaxPlayers`. Искали указатели UFunction в байткоде; контроль — `PrintString`, его нашли в 36 функциях.
+- **Создание лобби.** Асинхронная операция подсистемы (`0x144ee4040`, рядом строки `'s Lobby`, `CROSSPLAY`,
+  `MM_REGION_KEY`) кладёт `+0xac` в `FOnlineSessionSettings.NumPublicConnections`. Redpoint EOS по нему задаёт
+  размер лобби EOS.
+- **Проверка входа у хоста.** `ReadyOrNotGameMode::PreLogin` (`0x144ece4d0`) отвечает «Server is full!», если
+  `игроки + PlayersJoining + 1 > NumPublicConnections` сессии `GameSession`. Если сессии нет, порог — 5.
+  `ReadyOrNotGameMode.MaxPlayersAllowed` (5) и `GameSession.MaxPlayers` (16) этот вход не ограничивают.
+- **Когда лобби заполнено.** `0x144f03190` при `+0xac <= RegisteredPlayers` обновляет лобби
+  (видимо, закрывает его для поиска).
+- **Уже созданное лобби смена значения не меняет:** число мест задаётся при создании.
+
+Вывод: HostBrain при запуске игры (главное меню, до создания лобби) вызывает `SetMaxPlayers(10)`.
+`comp_maxplayers <2..16>` меняет значение, `comp_status` его показывает. Значение 10 подтверждено в игре
+(`GetMaxPlayers` до и после).
+
+Не проверено (нужны живые игроки):
+- что лобби, созданное после этого, принимает 6-го и следующих игроков;
+- где появятся 6–10-й игроки. В ко-оп миссии кампуса у зоны входа один `PlayerStart`. Спавн
+  (`SpawnPlayerCharacter` → `FActorSpawnParameters.SpawnCollisionHandlingOverride = 2`,
+  «AdjustIfPossibleButAlwaysSpawn») не откажет, но сдвинет персонажей. Подозреваемых PvP сразу переносит к ИИ.
 
 ## Регистрация попаданий (S4)
 

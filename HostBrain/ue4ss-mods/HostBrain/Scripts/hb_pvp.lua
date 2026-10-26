@@ -29,7 +29,7 @@ local Pvp = {}
 local Deps = {} -- from main.lua (Pvp.RegisterCommands)
 
 local Settings = {
-    Bots = false,        -- keep the AI SWAT squad (only single-player missions have one; "bots" to try)
+    Bots = false,        -- give SWAT the mission's AI squad (it follows the host, so the host plays SWAT)
     Minutes = 15,        -- suspects win when they hold out this long
     RespawnDelay = 10,   -- seconds from a suspect player's death to taking over an AI suspect
     SafeDistance = 1000, -- cm: an AI suspect this close to a SWAT is not taken over
@@ -52,6 +52,7 @@ local Match = {
     Removed = {},     -- address -> true for AI suspects taken over (gone at the end of the frame)
     LastRoster = -math.huge,
     Bots = false,      -- this mission has the AI squad (Settings.Bots and a SWAT host)
+    SquadVariable = nil, -- value last set for a.RonSpawnSwatInIncompatibleMode
     SquadSeen = false, -- the AI squad spawns a little after the players
     Warned = {},
     Winner = nil,
@@ -121,6 +122,23 @@ end
 -- With the hidden PvP flag set before the mission starts, the mission comes without its AI SWAT squad
 -- (CoopGS handles "PvP actors", DT_ActorsToHandleInPvP). With bots the flag waits until the squad
 -- has spawned.
+-- The game spawns the AI squad of a co-op mission only in single player, unless
+-- a.RonSpawnSwatInIncompatibleMode is 1 ("always spawn the swat ... even if it's a multiplayer game",
+-- not a cheat variable). The squad forms around the host, so it is only asked for when the host plays
+-- SWAT, and switched off again once the mission has started.
+local function SetSquadVariable(on)
+    local value = on and 1 or 0
+    if Match.SquadVariable == value then return end
+    Match.SquadVariable = value
+    Exec("a.RonSpawnSwatInIncompatibleMode " .. value)
+    Log("AI squad in multiplayer missions: %s", on and "on" or "off")
+end
+
+local function HostName()
+    local ok, name = pcall(function() return UEHelpers.GetPlayerController().PlayerState:GetPlayerName():ToString() end)
+    return ok and name or nil
+end
+
 local function EnablePvpFlags()
     local gameState = UEHelpers.GetGameStateBase()
     local bots = Match.Phase == "live" and Match.Bots or Settings.Bots
@@ -239,6 +257,7 @@ local function Convert(player, convert)
     SetTeam(player, TeamSuspect)
     pawn.DefaultTeam = TeamSuspect
     L.EquipSuspectKit(pawn, convert.Primary, convert.Secondary)
+    L.ApplySuspectOutfit(player.State, UEHelpers.GetGameModeBase())
     local stripped = L.StripSwatGear(pawn)
     pcall(L.FillMagazines, pawn)
     Match.Stripped[tostring(pawn:GetAddress())] = true
@@ -287,6 +306,7 @@ local function TakeOver(player, ai)
     end)
     pawn.DefaultTeam = TeamSuspect
     L.EquipSuspectKit(pawn, convert.Primary, convert.Secondary)
+    L.ApplySuspectOutfit(player.State, gameMode)
     local stripped = L.StripSwatGear(pawn)
     pcall(L.FillMagazines, pawn)
     Match.Stripped[tostring(pawn:GetAddress())] = true
@@ -402,6 +422,7 @@ local function StartLive(now, players)
 end
 
 local function BriefingTick(now, players)
+    SetSquadVariable(Settings.Bots and Match.Teams[HostName() or ""] ~= TeamSuspect)
     if now - Match.LastRoster >= 20 then
         Match.LastRoster = now
         Say(Roster(players) .. ". Выбор команды в чате: !swat или !suspect")
@@ -485,10 +506,11 @@ local function LiveTick(now, players)
     -- everyone and the AI squad need a moment to spawn before anybody can count as out
     local squad = #LivingSwat()
     Match.SquadSeen = Match.SquadSeen or squad > 0
+    if Match.SquadSeen or now - Match.StartedAt > 30 then SetSquadVariable(false) end
     if Match.Bots and not Match.SquadSeen and now - Match.StartedAt > 30 then
-        -- the game only gives a single-player mission its AI squad; a hosted (listen) mission has none
+        -- the mission has no AI squad (its level script spawns none), or the spawn was refused
         Match.Bots = false
-        Say("PvP: ИИ-отряд SWAT в сетевой миссии не появляется — играем без ботов")
+        Say("PvP: ИИ-отряд SWAT не появился — играем без ботов")
     end
     if now - Match.StartedAt < 10 then return end
     if swatPlayers > 0 and swatAlive == 0 then
@@ -591,6 +613,7 @@ function Pvp.FireTick()
 end
 
 function Pvp.Stop()
+    if Match.Active then SetSquadVariable(false) end
     Match.Active, Match.Phase = false, "idle"
 end
 

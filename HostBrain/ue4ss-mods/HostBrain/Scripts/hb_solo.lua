@@ -105,6 +105,7 @@ local function SuspectTick()
     if not SetHostSuspect() then return end
     if Suspect.MovedInWorld ~= Worlds.Generation and MoveHostToSuspects() then
         Suspect.MovedInWorld = Worlds.Generation
+        L.ApplySuspectOutfit(UEHelpers.GetPlayerController().PlayerState, UEHelpers.GetGameModeBase())
         Log("you play as a suspect: AI suspects are your team, the AI SWAT squad is the enemy")
     end
 end
