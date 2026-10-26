@@ -221,6 +221,13 @@
   HostBrain пускает только проверенные пары, остальные — с `force`.
 - **Путь `StopSequence(nullptr)` бывает и во Firefight**: в одном из запусков через ~20 с после загрузки кампуса стек
   прошёл `144ed8b50+0x109 → 144ec87e0 → заглушка` (возврат `+0x4ec884a`).
+- **Урок: `RestartMod` не снимает хуки Blueprint-функций** (27.10.2026). В логе перезапуска есть
+  «Unregistering hook» только для нативных функций. Скриптовые хуки (`Registered script hook` на
+  `W_PreMission_C:SwapTeams`, `W_StandardButton_C:OnClicked_Derived`) остаются и указывают на Lua-состояние,
+  которого уже нет. Клик по кнопке после перезапуска повесил игру: игровой поток стоял в UE4SS в `get_lua_state`
+  внутри цепочки `ProcessEvent` → `ProcessInternal` → скриптовые хуки (минидамп снят своим `hangdump.py`,
+  раскрутка — `unwind.py`). В обычной игре мод не перезапускается; при разработке после первого экрана подготовки
+  игру перезапускаем целиком.
 - **Урок: `RestartMod` выгружает DLL.** При перезапуске Lua-мода Lua закрывает состояние и через `__gc` библиотеки
   `package` вызывает `FreeLibrary` для всего, что загружено `package.loadlib`. Патч в игре остался и прыгнул в пустую
   память → вылет «в tier0_s64» (`re/dumps/crash-after-restartmod/`). Исправлено: `RonCompNative` закрепляет себя
@@ -435,6 +442,16 @@ Ghidra по UE4SS.dll: `tools/ghidra_decompile.ps1 -Binary ...\ue4ss\UE4SS.dll -
     привязку.
   - Хук на `SwapTeams` переключает хоста между SWAT и подозреваемыми.
   - Клиентам кнопку так не показать (у них нет UE4SS), у них выбор через чат.
+- **Меню выбора команды без pak** (`hb_menu.lua`):
+  - панель собирается в корневом `CanvasPanel` экрана (`W_PreMission_C.WidgetTree.RootWidget`) из `Border`,
+    `VerticalBox`, `HorizontalBox`, `SizeBox`, `TextBlock` через `StaticConstructObject(класс, WidgetTree)`;
+  - фон: `Border.Background.DrawAs = Image` и `SetBrushColor`; размер шрифта — копия `TextBlock.Font` с новым
+    `Size` в `SetFont`;
+  - кнопки — игровые `W_StandardButton_C` (`WidgetBlueprintLibrary::Create`), вид задаёт `DisplayStyle`:
+    0 светлая, 3 красная, 6 серая, 8 жёлтая (значения перечисления в игре без имён, подобраны на экране);
+  - и мышь, и `SimulateClicked` проходят через `W_StandardButton_C::OnClicked_Derived`; один хук на неё
+    различает кнопки по адресу. Подпись кнопки после `SetButtonText` лежит во внутреннем `Text`, а не в
+    `ButtonText`.
 - **Готовность в одиночной миссии.** Примерно через 4 с после появления экрана хост становится готов без нажатия, и
   через 10 с миссия стартует. Это не HostBrain и не зонд; возможно, один из модов mod.io. Снять готовность не удалось:
   ни `Server_SetReadyState(false)`, ни `ToggleReady` не помогают. Сработало удержание отсчёта: пока хост не нажал

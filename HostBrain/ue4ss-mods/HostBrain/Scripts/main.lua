@@ -5,8 +5,9 @@
 --   * comp_start travels the host to "<map>?listen?game=<mode>" with the game's mode aliases;
 --   * RonCompNative.dll guards the round reset crash (Multicast_StopSequence(nullptr));
 --   * server-side hit validation (UHitRegistrationSettings) is switched on for the host.
--- Modules: hb_common (helpers), hb_loadout (suspect equipment), hb_solo (suspect vs AI SWAT),
--- hb_pvp (SWAT players vs suspect players in a co-op mission).
+-- Modules: hb_common (helpers), hb_loadout (suspect equipment), hb_hunt (the AI squad hunting suspects),
+-- hb_solo (suspect vs AI SWAT), hb_pvp (SWAT players vs suspect players in a co-op mission) and hb_menu
+-- (its team menu on the host's pre-mission screen).
 --
 -- Console commands (UE console, or any ExecuteConsoleCommand on the host):
 --   comp_pvp <map|here> [minutes] [bots] [test]

@@ -27,6 +27,10 @@
    `ExecuteWithDelay`/`LoopAsync` исполняют Lua на рабочем потоке UE4SS и со временем роняют игру
    (docs/re-findings.md, «Краш через ~2 ч игры»). `obj:GetClass()` вызывать только после `obj:IsValid()`:
    на нулевом объекте UE4SS читает `+0x10` и игра падает. `ApplyDamage` — только с инстигатором и причиной.
+   Новые скрипты HostBrain после деплоя подхватываются `RestartMod("HostBrain")`, но только пока HostBrain не
+   поставил хуки на Blueprint-функции (`SwapTeams`, `ToggleReady`, `OnClicked_Derived` — после первого экрана
+   подготовки). `RestartMod` снимает только нативные хуки, а скриптовые остаются привязаны к удалённому Lua-состоянию:
+   следующий вызов такой функции вешает игру. После экрана подготовки — перезапуск игры.
 4. Вывод пишется в `Mods/RonCompProbe/probe.log`.
 5. Скриншоты сохраняются в `<игра>/ReadyOrNot/Ready Or Not/Saved/Screenshots/`:
    `Exec("shot showui")` снимает кадр с интерфейсом, `HighResShot 1` — только 3D-сцену.

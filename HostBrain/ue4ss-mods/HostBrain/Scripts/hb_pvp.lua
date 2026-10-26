@@ -24,6 +24,7 @@ local UEHelpers = require("UEHelpers")
 local C = require("hb_common")
 local L = require("hb_loadout")
 local H = require("hb_hunt")
+local Menu = require("hb_menu")
 
 local Log, Valid, Exec = C.Log, C.Valid, C.Exec
 local TeamSwatRed, TeamSwatBlue, TeamSuspect, CoopMode = C.TeamSwatRed, C.TeamSwatBlue, C.TeamSuspect, C.CoopMode
@@ -40,7 +41,7 @@ local Settings = {
     Minutes = tonumber(Saved.pvp_minutes or "") or 10, -- suspects win when they hold out this long
     RespawnDelay = 10,   -- seconds from a suspect player's death to taking over an AI suspect
     SafeDistance = 1000, -- cm: an AI suspect this close to a SWAT is not taken over
-    BotAccuracy = 2.0,   -- AI SWAT aim penalty against suspect players (1 = normal aim)
+    BotAccuracy = tonumber(Saved.pvp_bot_accuracy or "") or 2.0, -- AI SWAT aim penalty against suspect players (1 = normal aim)
     Test = false,        -- start even without one of the sides (testing alone)
 }
 
@@ -149,6 +150,7 @@ local function ResetMission()
     Match.Suspects, Match.Converts, Match.Stripped, Match.Removed = {}, {}, {}, {}
     Match.SquadSeen, Match.HostWait, Match.LastRoster, Match.LastRosterText = false, nil, -math.huge, nil
     Match.HostConfirmed, Match.HoldTold = false, false
+    Menu.Reopen()
 end
 
 local function EnablePvpFlags()
@@ -485,6 +487,9 @@ local function OnSwapTeams(context)
     local team = Match.Teams[host.Name] == TeamSuspect and TeamSwatBlue or TeamSuspect
     Match.Teams[host.Name] = team
     Say(string.format("%s → %s", host.Name, TeamName(team)))
+    -- a host who changes sides after Ready chooses again in the team menu
+    Match.HostConfirmed = false
+    Menu.Reopen()
     -- the game relabels the button after SwapTeams; ours goes back on top
     TeamButton.Label = nil
     ExecuteInGameThreadWithDelay(100, function()
@@ -500,6 +505,7 @@ end
 local function OnToggleReady()
     if not Match.Active or Match.Phase ~= "briefing" or Match.HostConfirmed then return end
     Match.HostConfirmed = true
+    Menu.Hide()
     local host = HostPlayer(Players())
     Say(string.format("%s готов: %s", host and host.Name or "хост", TeamName(host and Match.Teams[host.Name] or TeamSwatBlue)))
 end
@@ -524,10 +530,97 @@ local function HoldStart()
             gameState.TimeTillGameStartCountdown = 10
             if not Match.HoldTold then
                 Match.HoldTold = true
-                Say("Старт ждёт хоста: выберите сторону кнопкой «Поменять команды» и нажмите «Готов»")
+                Say("Старт ждёт хоста: выберите сторону в меню и нажмите «Готов»")
             end
         end
     end)
+end
+
+---------------------------------------------------------------- the host's team menu (hb_menu)
+
+local Accuracies = { { 3.0, "НИЗКАЯ" }, { 2.0, "СРЕДНЯЯ" }, { 1.0, "ВЫСОКАЯ" } }
+local MinuteSteps = { 5, 10, 15, 20, 30 }
+
+local function AccuracyName()
+    for _, level in ipairs(Accuracies) do
+        if math.abs(level[1] - Settings.BotAccuracy) < 0.01 then return level[2] end
+    end
+    return string.format("%.1f", Settings.BotAccuracy)
+end
+
+local function Next(list, current, key)
+    for i, item in ipairs(list) do
+        local value = key and item[key] or item
+        if value == current then return list[i % #list + 1] end
+    end
+    return list[1]
+end
+
+local function MenuState(players, host)
+    local Colors = Menu.Colors
+    local state = { Swat = {}, Suspects = {}, SwatCount = 0, SuspectCount = 0, Bots = Settings.Bots,
+        Accuracy = AccuracyName(), Minutes = Settings.Minutes, Ready = Match.HostConfirmed }
+    for _, player in ipairs(players) do
+        local team = Match.Teams[player.Name] or (Match.Suspects[player.Name] and TeamSuspect) or player.Team
+        local isHost = host and player.Name == host.Name
+        local ready = false
+        if isHost then ready = Match.HostConfirmed else pcall(function() ready = player.State.bReady end) end
+        local entry = { Text = player.Name .. (isHost and " · хост" or "") .. (ready and " · готов" or ""), Color = Colors.White }
+        if team == TeamSuspect then
+            table.insert(state.Suspects, entry)
+            state.SuspectCount = state.SuspectCount + 1
+        else
+            table.insert(state.Swat, entry)
+            state.SwatCount = state.SwatCount + 1
+        end
+        if isHost then state.HostTeam = team == TeamSuspect and "suspect" or "swat" end
+    end
+    if Settings.Bots then table.insert(state.Swat, { Text = "ИИ-отряд SWAT · 4 бота", Color = Colors.SwatBot }) end
+    local ai = #LivingAiSuspects()
+    table.insert(state.Suspects, { Text = ai > 0 and string.format("ИИ-подозреваемые · %d", ai) or "ИИ-подозреваемые миссии", Color = Colors.SuspectAi })
+    state.Subtitle = string.format("PvP · миссия %d мин · убитый подозреваемый вселяется в живого ИИ-подозреваемого", Settings.Minutes)
+    return state
+end
+
+local ShowMenu -- forward: refreshes the menu right after a click
+
+local function OnMenuAction(action)
+    local players = Players()
+    local host = HostPlayer(players)
+    if not host or not Match.Active or Match.Phase ~= "briefing" then return end
+    if action == "swat" or action == "suspect" then
+        local team = action == "suspect" and TeamSuspect or TeamSwatBlue
+        if (Match.Teams[host.Name] or TeamSwatBlue) ~= team then Say(string.format("%s → %s", host.Name, TeamName(team))) end
+        Match.Teams[host.Name] = team
+        TeamButton.Label = nil
+    elseif action == "bots" then
+        Settings.Bots = not Settings.Bots
+        C.SaveSetting("pvp_bots", Settings.Bots and 1 or 0)
+        Say(Settings.Bots and "PvP: ИИ-отряд SWAT включён" or "PvP: ИИ-отряд SWAT выключен")
+    elseif action == "accuracy" then
+        Settings.BotAccuracy = Next(Accuracies, Settings.BotAccuracy, 1)[1]
+        C.SaveSetting("pvp_bot_accuracy", Settings.BotAccuracy)
+    elseif action == "minutes" then
+        Settings.Minutes = Next(MinuteSteps, Settings.Minutes)
+        C.SaveSetting("pvp_minutes", Settings.Minutes)
+    elseif action == "ready" then
+        local screen = TeamButton.Screen
+        local ready = false
+        pcall(function() ready = host.State.bReady end)
+        -- the game's own Ready when the host is not ready yet (its hook confirms); a host the game
+        -- readied by itself is confirmed directly
+        if not ready and Valid(screen) then pcall(function() screen:ToggleReady() end) end
+        OnToggleReady()
+    end
+    ShowMenu(players, host)
+end
+
+ShowMenu = function(players, host)
+    local screen = TeamButton.Screen
+    if not host or not Valid(screen) then return end
+    if Match.HostConfirmed then Menu.Hide() end
+    Menu.Show(screen, MenuState(players, host), OnMenuAction)
+    ShowTeamButton(host)
 end
 
 local function BriefingTick(now, players)
@@ -541,6 +634,7 @@ local function BriefingTick(now, players)
     HookPreMission("SwapTeams", OnSwapTeams)
     HookPreMission("ToggleReady", OnToggleReady)
     ShowTeamButton(host)
+    ShowMenu(players, host)
     if Match.LastRoster == -math.huge then
         Say(string.format("PvP: SWAT против подозреваемых · %d мин · %s. Подозреваемые воюют вместе с ИИ-подозреваемыми и после смерти вселяются в них",
             Settings.Minutes, Settings.Bots and "ИИ-отряд SWAT в игре" or "без ИИ-отряда SWAT"))
