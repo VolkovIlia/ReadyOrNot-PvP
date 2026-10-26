@@ -324,6 +324,32 @@
 - Ассеты играбельного подозреваемого: руки `Character/MLO/ron_suspect_fp_player_mlo`, материалы `PVP__MI_MLO_*`,
   флаг анимации `ReadyOrNotAnimInstance.bIsTeamMLO`.
 
+## Краш через ~2 ч игры: Lua из двух потоков (26.10.2026)
+
+Наблюдение:
+- Отчёт `%LOCALAPPDATA%\ReadyOrNot\Saved\Crashes\UECC-Windows-8BF10F...`: `EXCEPTION_ACCESS_VIOLATION reading 0xa`.
+  Стек в `CrashContext.runtime-xml` без символов бесполезен.
+- В Shipping нет своего лога, а `UE4SS.log` к моменту краша (12:43) не менялся почти 2 часа.
+- Раскрутка минидампа по `.pdata` / `UNWIND_INFO` модулей с диска (скрипт `unwind.py` в рабочей папке сессии).
+  Главный поток игры:
+  1. тик движка (`exe+0x365f185`);
+  2. обработчик игровых задач UE4SS (`UE4SS.dll+0x466c40` / `+0x45d310`);
+  3. `LuaMadeSimple::Lua::call_function`;
+  4. три уровня Lua (`pcall` → `pcall`);
+  5. `process_lua_function`;
+  6. `__index` у userdata (`UE4SS.dll+0xb9eff0`, это тот обработчик, что раньше давал ошибку
+     «System: Global for __index doesn't exist»);
+  7. `UE4SS.dll+0xc6a4b0` = `lua_setiuservalue`, где Udata по индексу −2 оказался NULL (`movzx r9d, word [r10+0xa]`).
+- Повреждённое состояние Lua. В HostBrain тот же Lua-стейт одновременно трогали:
+  - рабочий поток UE4SS: колбэки `LoopAsync` (1 с и 0,5 с) создавали замыкания и вызывали `ExecuteInGameThread`;
+  - игровой поток: тики, консольные команды, хук `BaseMagazineWeapon:Multicast_OnFire` на каждый выстрел любого оружия.
+
+Вывод: в модах не исполнять Lua вне игрового потока. Циклы — `LoopInGameThreadWithDelay`, задержки —
+`ExecuteInGameThreadWithDelay`. Никаких `LoopAsync`, `ExecuteWithDelay`, `RegisterKeyBind`.
+В этой сборке UE4SS есть: `LoopInGameThreadWithDelay`, `LoopInGameThreadAfterFrames`, `ExecuteInGameThreadWithDelay`,
+`RetriggerableExecuteInGameThreadWithDelay`, `CancelDelayedAction`, `RegisterEngineTickPre/PostCallback`.
+Ghidra по UE4SS.dll: `tools/ghidra_decompile.ps1 -Binary ...\ue4ss\UE4SS.dll -Project UE4SS <VA>` (база 0x180000000).
+
 ## Регистрация попаданий (S4)
 
 Метод: JMAP-дамп рефлексии (RPC-сигнатуры, значения CDO по умолчанию с учётом ini), строки exe.

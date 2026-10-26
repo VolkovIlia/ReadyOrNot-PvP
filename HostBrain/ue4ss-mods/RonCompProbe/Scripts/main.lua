@@ -203,16 +203,12 @@ local function Tick()
     RunInbox()
 end
 
-LoopAsync(1000, function()
-    ExecuteInGameThread(function()
-        local ok, err = pcall(Tick)
-        if not ok then Log("tick error: %s", tostring(err)) end
-    end)
-    return false
-end)
-
-RegisterKeyBind(Key.F7, function()
-    ExecuteInGameThread(function() P.State("manual") end)
+-- Game thread only: Lua callbacks on UE4SS worker threads (LoopAsync, key binds) race the game
+-- thread inside the same Lua state and can crash the game. Inbox scripts use
+-- ExecuteInGameThreadWithDelay instead of ExecuteWithDelay for the same reason.
+LoopInGameThreadWithDelay(1000, function()
+    local ok, err = pcall(Tick)
+    if not ok then Log("tick error: %s", tostring(err)) end
 end)
 
 Log("loaded; remote console at %s", InboxPath)

@@ -916,29 +916,32 @@ end)
 -- started from the game's own menus is protected; afterwards keep the suspect side applied (respawns
 -- create a new pawn with the default team) and run the rounds.
 local Ready = false
-LoopAsync(1000, function()
-    ExecuteInGameThread(function()
-        if not Valid(UEHelpers.GetWorld()) then return end
-        if not Ready then
-            Ready = true
-            InstallNativeGuards()
-            ApplyHitValidation(Config.HitValidation)
-        end
-        TrackWorld()
-        local ok, err = pcall(SuspectTick)
-        if not ok then Log("suspect tick failed: %s", tostring(err)) end
-        ok, err = pcall(RoundTick)
-        if not ok then Log("round tick failed: %s", tostring(err)) end
-    end)
-    return false
+local function Tick()
+    if not Valid(UEHelpers.GetWorld()) then return end
+    if not Ready then
+        Ready = true
+        InstallNativeGuards()
+        ApplyHitValidation(Config.HitValidation)
+    end
+    TrackWorld()
+    local ok, err = pcall(SuspectTick)
+    if not ok then Log("suspect tick failed: %s", tostring(err)) end
+    ok, err = pcall(RoundTick)
+    if not ok then Log("round tick failed: %s", tostring(err)) end
+end
+
+-- Every line of Lua runs on the game thread. LoopAsync callbacks run on a UE4SS worker thread while
+-- the game thread runs this mod's hooks and ticks in the same Lua state, which is not thread-safe:
+-- after a few hours of play the two threads corrupted the state and the game crashed in
+-- lua_setiuservalue (docs/re-findings.md).
+LoopInGameThreadWithDelay(1000, function()
+    local ok, err = pcall(Tick)
+    if not ok then Log("tick failed: %s", tostring(err)) end
 end)
 
-LoopAsync(500, function()
-    ExecuteInGameThread(function()
-        local ok, err = pcall(DirectSwatFire)
-        if not ok then Log("bot director failed: %s", tostring(err)) end
-    end)
-    return false
+LoopInGameThreadWithDelay(500, function()
+    local ok, err = pcall(DirectSwatFire)
+    if not ok then Log("bot director failed: %s", tostring(err)) end
 end)
 
 Log("loaded; commands: comp_start <map> [mode], comp_status, comp_maps, comp_modes, comp_hitvalidation <0|1>")

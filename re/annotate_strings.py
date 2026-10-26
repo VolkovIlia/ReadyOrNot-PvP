@@ -1,4 +1,4 @@
-"""Annotates DAT_14xxxxxxx references in Ghidra output with the ASCII/UTF-16 string stored there.
+"""Annotates DAT_<address> references in Ghidra output with the ASCII/UTF-16 string stored there.
 
 Without whole-program analysis Ghidra does not define strings, so decompiled code shows bare DAT_
 labels. This reads the bytes straight from the PE file and appends `/* "text" */` where a reference
@@ -48,7 +48,9 @@ def main():
     exe, folder = sys.argv[1], Path(sys.argv[2])
     data = Path(exe).read_bytes()
     image_base, sections = load_sections(data)
-    pattern = re.compile(r'\b(?:DAT|PTR_DAT|UNK|s|u)_(14[0-9a-f]{7})\b')
+    # Ghidra labels data by its full VA, so the leading digit follows the module's image base.
+    prefix = f'{image_base >> 28:x}'
+    pattern = re.compile(r'\b(?:DAT|PTR_DAT|UNK|s|u)_(' + prefix + r'[0-9a-f]{7})\b')
     for path in sorted(folder.glob('*.c')):
         text = path.read_text(encoding='utf-8', errors='replace')
 
