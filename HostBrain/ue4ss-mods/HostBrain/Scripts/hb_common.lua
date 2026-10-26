@@ -211,10 +211,11 @@ local function Toast(text)
     if hud then pcall(function() hud:AddToast(text) end) end
 end
 
--- The squad's status panel and the command prompt tell a suspect where the enemy squad is and what it
--- does; on a suspect host's HUD they are collapsed (SetVisibility replaces their bindings until the HUD
--- is built again with the next pawn or mission).
-local SquadHudParts = { "SWATTeamStatus_V2", "SWATTeamStatus_V2_Gamepad", "CommandContext_Container", "CommandContext_Container_Gamepad" }
+-- The squad's status panel tells a suspect what the enemy squad does; on a suspect host's HUD it is
+-- collapsed (SetVisibility replaces its binding until the HUD is built again with the next pawn or
+-- mission). The context prompt next to it (CommandContext_Container) stays: the game shows it when the
+-- player looks at a door, and collapsing it once a second made door prompts appear a second or two late.
+local SquadHudParts = { "SWATTeamStatus_V2", "SWATTeamStatus_V2_Gamepad" }
 
 local function HideSquadHud()
     local hud = Hud()

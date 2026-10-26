@@ -9,9 +9,11 @@ local L = {}
 -- the AI suspects. The guns are player weapons (/Game/Blueprints/Items/WeaponsRevised): the AI
 -- suspects' own weapons (WeaponsSuspect) have no magazines for a player, and drawing their pistols
 -- breaks the first-person animation and throws the player out of the map.
+-- AK-102, AK-103, G3A3 and Saiga-12 are left out: their handling (InertiaDragStrafeRotation/Location 1.0,
+-- FreeAimLimitADS up to 4.5, against 0.4/0.2 and 1.0 on the SWAT MK18) throws the sights about when a
+-- player aims while stepping sideways. SLR-47 is the AK-pattern rifle with SWAT-like handling.
 local SuspectPrimaries = {
-    "Primary_AK102", "Primary_AK103", "Primary_SLR47", "Primary_Saiga12", "Primary_G3A3", "Primary_FAL",
-    "Primary_870mcs",
+    "Primary_SLR47", "Primary_FAL", "Primary_870mcs", "Primary_MP5A2",
 }
 local SuspectSecondaries = {
     "Secondary_M1911_V2", "Secondary_M92FS_V2", "Secondary_G19_V2", "Secondary_Python_V2", "Secondary_P99",
@@ -73,12 +75,13 @@ end
 ---------------------------------------------------------------- PvP: taking over an AI suspect
 
 -- The player version of an AI suspect's gun (WeaponsSuspect class name without "_C"), so a player who
--- takes an AI's place fights with what that AI carried.
+-- takes an AI's place fights with a gun of the same kind. AKs become the SLR-47 and the G3 and machine
+-- guns the FAL (see SuspectPrimaries for why).
 local PlayerEquivalent = {
-    Primary_AKM = "Primary_AK103", Primary_S_AK103 = "Primary_AK103", Primary_AK104 = "Primary_AK102",
-    Primary_AKS74U = "Primary_AK102", Primary_QBZ = "Primary_SLR47", Primary_CAR = "Primary_SBR",
-    Primary_Calico = "Primary_MP5A2", Primary_UZI = "Primary_MP9", Primary_M249 = "Primary_G3A3",
-    Primary_RPD = "Primary_G3A3", Primary_S_G3A3 = "Primary_G3A3", Primary_S_MK18_VAR1 = "Primary_MK18",
+    Primary_AKM = "Primary_SLR47", Primary_S_AK103 = "Primary_SLR47", Primary_AK104 = "Primary_SLR47",
+    Primary_AKS74U = "Primary_SLR47", Primary_QBZ = "Primary_SLR47", Primary_CAR = "Primary_SBR",
+    Primary_Calico = "Primary_MP5A2", Primary_UZI = "Primary_MP9", Primary_M249 = "Primary_FAL",
+    Primary_RPD = "Primary_FAL", Primary_S_G3A3 = "Primary_FAL", Primary_S_MK18_VAR1 = "Primary_MK18",
     Primary_S_MK18_VAR2 = "Primary_MK18", Primary_S_MK18_VAR3_CMAG = "Primary_MK18", Primary_M37 = "Primary_870mcs",
     Primary_S_870mcs = "Primary_870mcs", Primary_SawnOff = "Primary_870mcs", Primary_Trenchgun = "Primary_870mcs",
     Secondary_Makarov = "Secondary_M92FS_V2", Secondary_Makarov_2Handed = "Secondary_M92FS_V2",
