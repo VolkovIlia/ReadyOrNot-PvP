@@ -123,6 +123,10 @@ local function InstallNativeGuards()
     end
     ini:write("[guards]\n")
     ini:write(string.format("stop_sequence_fname_index=%d\n", stopSequence:GetFName():GetComparisonIndex()))
+    local displayScore = StaticFindObject("/Script/ReadyOrNot.ScoringManager:Multicast_DisplayScore")
+    if Valid(displayScore) then
+        ini:write(string.format("display_score_fname_index=%d\n", displayScore:GetFName():GetComparisonIndex()))
+    end
     ini:write(string.format("session_token=%s\n", token))
     ini:close()
 
@@ -133,10 +137,20 @@ local function InstallNativeGuards()
     end
     install()
 
-    local status = (ReadFile(NativeLog) or ""):match("STATUS " .. token:gsub("%-", "%%-") .. " (%a+)")
+    local log = ReadFile(NativeLog) or ""
+    local status = log:match("STATUS " .. token:gsub("%-", "%%-") .. " (%a+)")
     State.GuardsInstalled = status == "ok"
-    Log("native guards: %s (session %s, see %s)", State.GuardsInstalled and "installed" or ("FAILED: " .. tostring(status or "no answer")), token, NativeLog)
+    State.PvpRules = log:match("PVPRULES " .. token:gsub("%-", "%%-") .. " (%a+)") == "ok"
+    Log("native guards: %s; co-op PvP rules (civilians stay neutral, no score popups): %s (session %s, see %s)",
+        State.GuardsInstalled and "installed" or ("FAILED: " .. tostring(status or "no answer")),
+        State.PvpRules and "installed" or "NOT installed", token, NativeLog)
     return State.GuardsInstalled
+end
+
+-- Tells RonCompNative whether a PvP match is running (its score popup guard only acts then).
+local function SetNativePvp(on)
+    local switch = package.loadlib(NativeDll, on and "RonCompNative_PvpOn" or "RonCompNative_PvpOff")
+    if switch then switch() end
 end
 
 -- SWAT-only server RPCs a suspect player's character must not get through (RonCompNative filter):
@@ -327,8 +341,9 @@ local function Status(out)
             tostring(gameState.RedTeamWins), tostring(gameState.BlueTeamWins)))
     end
     local settings = StaticFindObject(HitSettingsPath)
-    out(string.format("guards: %s, suspect RPC filter: %s, hit validation: %s", State.GuardsInstalled and "installed" or "NOT installed",
-        State.FilterInstalled and "installed" or "NOT installed", Valid(settings) and tostring(settings.bEnableValidation) or "?"))
+    out(string.format("guards: %s, co-op PvP rules: %s, suspect RPC filter: %s, hit validation: %s", State.GuardsInstalled and "installed" or "NOT installed",
+        State.PvpRules and "installed" or "NOT installed", State.FilterInstalled and "installed" or "NOT installed",
+        Valid(settings) and tostring(settings.bEnableValidation) or "?"))
     local statics = StaticFindObject(StaticsPath)
     local context = UEHelpers.GetPlayerController()
     out(string.format("lobby cap: %s (setting %d)", Valid(statics) and Valid(context) and tostring(statics:GetMaxPlayers(context)) or "?", Config.LobbyCap))
@@ -397,6 +412,7 @@ Pvp.RegisterCommands(Register, {
     StopOtherModes = function() Solo.Stop() end,
     OtherModeActive = function() return Solo.Active() end,
     FilterInstalled = function() return State.FilterInstalled end,
+    SetNativePvp = SetNativePvp,
 })
 
 -- Install the guards and switch hit validation on as soon as the game is up, so that even a match

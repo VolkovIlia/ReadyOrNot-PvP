@@ -14,6 +14,10 @@
 // Filter: SWAT-only server RPCs (yell, reports to TOC, arrests, orders to civilians, interactions
 //   with characters) are dropped when a suspect player's character sends them (PvP and the solo
 //   suspect mode); see InstallRpcFilter.
+//
+// Co-op PvP rules: the team rules ignore the hidden co-op PvP flag (otherwise civilians become
+//   everybody's enemy and the AI shoots them), and score popups are dropped during a PvP match;
+//   see InstallTeamRulesPatch and InstallDisplayScoreGuard.
 
 #include <windows.h>
 
@@ -351,6 +355,168 @@ namespace
         return passed;
     }
 
+    // ------------------------------------------------------------------ co-op PvP rules
+
+    // While HostBrain runs a PvP match it switches g_PvpActive (RonCompNative_PvpOn / _PvpOff).
+    std::atomic<bool> g_PvpActive{false};
+
+    // Team rules. With the hidden co-op PvP flag (CoopGS.bCrouchingTigerHiddenDragon) the game's
+    // IsEnemyTeam(A, B) becomes "A != B" and IsFriendlyTeam "A == B". Civilians (TT_CIVILIAN) then
+    // turn into enemies of the AI SWAT squad and of the AI suspects, which shoot them. Each of the
+    // three functions starts by asking for the flag; the patch makes them use the ordinary rules
+    // (SWAT vs suspects, civilians neutral) while the flag still drives spectating and team view.
+    //   IsEnemyTeam:    call flag; test al,al; jz ordinary  ->  jmp ordinary
+    //   IsFriendlyTeam: call flag; test al,al; jnz by-team  ->  xor al,al; nop; nop (AL is compared next)
+    const int16_t EnemyTeamFlagCheck[] = {
+        0xE8, -1, -1, -1, -1, // call IsSecretPvP
+        0x84, 0xC0,           // test al, al
+        0x74, 0x11,           // jz ordinary rules
+        0x40, 0x3A, 0xFB,     // cmp dil, bl
+        0x0F, 0x95, 0xC0,     // setnz al
+    };
+    const int16_t FriendlyTeamFlagCheck[] = {
+        0xE8, -1, -1, -1, -1,             // call IsSecretPvP
+        0x84, 0xC0,                       // test al, al
+        0x75, 0x4D,                       // jnz compare teams
+        0x38, 0x86, 0x40, 0x08, 0x00, 0x00, // cmp [rsi+840h], al
+    };
+
+    const uint8_t* CallTarget(const uint8_t* call)
+    {
+        int32_t displacement = 0;
+        std::memcpy(&displacement, call + 1, sizeof(displacement));
+        return call + 5 + displacement;
+    }
+
+    bool WriteCode(uint8_t* at, const uint8_t* bytes, size_t length)
+    {
+        DWORD oldProtection = 0;
+        if (!VirtualProtect(at, length, PAGE_EXECUTE_READWRITE, &oldProtection))
+        {
+            return false;
+        }
+        std::memcpy(at, bytes, length);
+        DWORD ignored = 0;
+        VirtualProtect(at, length, oldProtection, &ignored);
+        FlushInstructionCache(GetCurrentProcess(), at, length);
+        return true;
+    }
+
+    bool InstallTeamRulesPatch()
+    {
+        const CodeRange text = TextSection(GetModuleHandleW(nullptr));
+        const auto enemy = FindPattern(text, EnemyTeamFlagCheck, sizeof(EnemyTeamFlagCheck) / sizeof(EnemyTeamFlagCheck[0]));
+        const auto friendly = FindPattern(text, FriendlyTeamFlagCheck, sizeof(FriendlyTeamFlagCheck) / sizeof(FriendlyTeamFlagCheck[0]));
+        Log("team rules: IsEnemyTeam flag checks %zu, IsFriendlyTeam flag checks %zu", enemy.size(), friendly.size());
+        if (enemy.size() != 1 || friendly.size() != 2)
+        {
+            Log("ERROR expected 1 + 2 flag checks; team rules NOT patched");
+            return false;
+        }
+        const uint8_t* flag = CallTarget(enemy[0]);
+        if (CallTarget(friendly[0]) != flag || CallTarget(friendly[1]) != flag)
+        {
+            Log("ERROR the flag checks call different functions; team rules NOT patched");
+            return false;
+        }
+        const uint8_t jump = 0xEB;
+        const uint8_t clear[] = {0x32, 0xC0, 0x90, 0x90};
+        bool ok = WriteCode(enemy[0] + 7, &jump, 1);
+        ok = ok && WriteCode(friendly[0] + 5, clear, sizeof(clear));
+        ok = ok && WriteCode(friendly[1] + 5, clear, sizeof(clear));
+        const auto* base = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));
+        Log(ok ? "OK team rules ignore the co-op PvP flag (exe+0x%llx, +0x%llx, +0x%llx)"
+               : "ERROR could not write the team rules patch (exe+0x%llx, +0x%llx, +0x%llx)",
+            static_cast<unsigned long long>(enemy[0] - base), static_cast<unsigned long long>(friendly[0] - base),
+            static_cast<unsigned long long>(friendly[1] - base));
+        return ok;
+    }
+
+    // Score popups. AScoringManager::Multicast_DisplayScore(const FText&, int32, bool) shows "+N <score>"
+    // on every player's HUD; in PvP the suspects would see SWAT's mission score. Its native stub calls
+    // ProcessEvent (which sends the multicast), so the detour drops the popup for everyone while PvP is
+    // on. The stub is the function that loads the FName global holding Multicast_DisplayScore
+    // (mov rdx, [rip+name]); its 16-byte prologue is copied to the trampoline.
+    const uint8_t DisplayScorePrologue[] = {
+        0x48, 0x89, 0x5C, 0x24, 0x08, // mov [rsp+8], rbx
+        0x48, 0x89, 0x6C, 0x24, 0x10, // mov [rsp+10h], rbp
+        0x48, 0x89, 0x74, 0x24, 0x18, // mov [rsp+18h], rsi
+        0x57,                         // push rdi
+    };
+
+    using DisplayScoreFunction = void (*)(void* manager, void* text, int32_t score, bool give);
+    DisplayScoreFunction g_OriginalDisplayScore = nullptr;
+    std::atomic<uint32_t> g_BlockedScores{0};
+
+    void DisplayScoreGuard(void* manager, void* text, int32_t score, bool give)
+    {
+        if (g_PvpActive.load())
+        {
+            const uint32_t blocked = ++g_BlockedScores;
+            if (blocked <= 5 || blocked % 50 == 0)
+            {
+                Log("blocked score popup %d during PvP #%u", score, blocked);
+            }
+            return;
+        }
+        g_OriginalDisplayScore(manager, text, score, give);
+    }
+
+    bool InstallDisplayScoreGuard()
+    {
+        uint32_t fnameIndex = 0;
+        if (!ReadIniUInt(L"display_score_fname_index", fnameIndex))
+        {
+            Log("ERROR display_score_fname_index missing in RonCompNative.ini");
+            return false;
+        }
+        auto* base = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));
+        const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + reinterpret_cast<const IMAGE_DOS_HEADER*>(base)->e_lfanew);
+        const uint8_t* imageEnd = base + nt->OptionalHeader.SizeOfImage;
+        const CodeRange text = TextSection(GetModuleHandleW(nullptr));
+        const int16_t loadName[] = {0x48, 0x8B, 0x15, -1, -1, -1, -1}; // mov rdx, [rip+disp32]
+        std::vector<uint8_t*> stubs;
+        for (uint8_t* load : FindPattern(text, loadName, 7))
+        {
+            int32_t displacement = 0;
+            std::memcpy(&displacement, load + 3, sizeof(displacement));
+            const uint8_t* global = load + 7 + displacement;
+            if (global < base || global + sizeof(FNameValue) > imageEnd || (global >= text.Begin && global < text.End))
+            {
+                continue;
+            }
+            FNameValue name{};
+            std::memcpy(&name, global, sizeof(name));
+            if (name.ComparisonIndex != fnameIndex || name.Number != 0)
+            {
+                continue;
+            }
+            DWORD64 imageBase = 0;
+            const RUNTIME_FUNCTION* entry = RtlLookupFunctionEntry(reinterpret_cast<DWORD64>(load), &imageBase, nullptr);
+            if (entry)
+            {
+                stubs.push_back(reinterpret_cast<uint8_t*>(imageBase + entry->BeginAddress));
+            }
+        }
+        Log("Multicast_DisplayScore (fname %u): %zu loading function(s)", fnameIndex, stubs.size());
+        if (stubs.size() != 1 || std::memcmp(stubs[0], DisplayScorePrologue, sizeof(DisplayScorePrologue)) != 0)
+        {
+            Log("ERROR expected one stub with the known prologue; score popup guard NOT installed");
+            return false;
+        }
+        void* trampoline = InstallDetour(stubs[0], reinterpret_cast<const void*>(&DisplayScoreGuard));
+        if (!trampoline)
+        {
+            Log("ERROR could not patch the score popup stub");
+            return false;
+        }
+        g_OriginalDisplayScore = reinterpret_cast<DisplayScoreFunction>(trampoline);
+        Log("OK score popup guard installed at exe+0x%llx", static_cast<unsigned long long>(stubs[0] - base));
+        return true;
+    }
+
+    bool g_PvpRulesInstalled = false;
+
     bool g_Installed = false;
 
     // ------------------------------------------------------------------ suspect RPC filter
@@ -600,12 +766,36 @@ extern "C" __declspec(dllexport) int RonCompNative_InstallGuards(void* /*luaStat
     {
         Log("---- RonCompNative: installing guards (pid %lu)", GetCurrentProcessId());
         g_Installed = InstallStopSequenceGuard() && SelfTestStopSequenceGuard();
+        const bool teamRules = InstallTeamRulesPatch();
+        const bool scores = InstallDisplayScoreGuard();
+        g_PvpRulesInstalled = teamRules && scores;
     }
     else
     {
         Log("guards already installed in this process");
     }
+    Log("PVPRULES %s %s", token.empty() ? "-" : token.c_str(), g_PvpRulesInstalled ? "ok" : "failed");
     Log("STATUS %s %s", token.empty() ? "-" : token.c_str(), g_Installed ? "ok" : "failed");
+    return 0;
+}
+
+// PvP on/off for the guards that only act during a match (score popups). Called from Lua as
+// package.loadlib(dll, "RonCompNative_PvpOn")() and "_PvpOff".
+extern "C" __declspec(dllexport) int RonCompNative_PvpOn(void* /*luaState*/)
+{
+    if (!g_PvpActive.exchange(true))
+    {
+        Log("PvP on");
+    }
+    return 0;
+}
+
+extern "C" __declspec(dllexport) int RonCompNative_PvpOff(void* /*luaState*/)
+{
+    if (g_PvpActive.exchange(false))
+    {
+        Log("PvP off");
+    }
     return 0;
 }
 

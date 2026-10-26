@@ -1,10 +1,15 @@
--- HostBrain team menu: a CS2-style team choice drawn on the host's own pre-mission screen.
+-- HostBrain team menu: a CS2-style team choice drawn over the host's own pre-mission screen.
 --
--- No pak is involved: the panel is built at runtime from UMG primitives (Border, boxes, TextBlock)
--- placed in the screen's root canvas, and the buttons are the game's W_StandardButton_C. Their clicks
--- (mouse or SimulateClicked) all pass through W_StandardButton_C::OnClicked_Derived, which is hooked
--- once and told apart by the button's address. Clients see none of it (no UE4SS there); they pick
--- teams in chat.
+-- No pak is involved: the page is built at runtime from UMG primitives (Border, boxes, SizeBox,
+-- TextBlock) placed in the screen's root canvas, and the buttons are the game's W_StandardButton_C.
+-- Their clicks (mouse or SimulateClicked) all pass through W_StandardButton_C::OnClicked_Derived,
+-- which is hooked once and told apart by the button's address. Clients see none of it (no UE4SS
+-- there); they pick teams in chat.
+--
+-- Layout, after CS2's team select: a dark full-screen page, "ВЫБЕРИТЕ КОМАНДУ", two team cards side by
+-- side (SWAT blue, suspects orange) with a coloured header, "players / 5", the player slots (bots fill
+-- SWAT's free slots by their squad names) and a join button; below, the bots and time settings,
+-- auto-select and Ready.
 
 local C = require("hb_common")
 
@@ -25,22 +30,42 @@ local ClickHook = Classes.Button .. ":OnClicked_Derived"
 -- W_StandardButton_C.DisplayStyle values (StandardButtonStyles has no names; picked on screen)
 local Style = { Light = 0, Red = 3, Dark = 6, Yellow = 8 }
 
+-- UMG enums
+local Visible, Collapsed, SelfHitTestInvisible = 0, 1, 4
+local AlignCenter = 2
+local SizeAuto, SizeFill = 0, 1
+
+-- UMG colours are linear: 0.2 shows as about 0.48 on screen.
 local Colors = {
     White = { 1, 1, 1 },
-    Grey = { 0.62, 0.64, 0.68 },
-    Swat = { 0.55, 0.75, 1 },
-    SwatBot = { 0.45, 0.58, 0.75 },
-    Suspect = { 1, 0.47, 0.42 },
-    SuspectAi = { 0.78, 0.48, 0.45 },
+    Grey = { 0.32, 0.34, 0.37 },
+    Dim = { 0.16, 0.17, 0.19 },
+    Swat = { 0.3, 0.5, 1 },
+    SwatBot = { 0.22, 0.32, 0.55 },
+    Suspect = { 1, 0.5, 0.12 },
+    SuspectAi = { 0.62, 0.32, 0.1 },
 }
 
-local Lines = 10 -- names per column
+local Teams = {
+    swat = {
+        Title = "SWAT", Header = { 0.04, 0.1, 0.27, 1 }, HeaderChosen = { 0.07, 0.19, 0.5, 1 },
+        Body = { 0.006, 0.012, 0.025, 0.96 }, Accent = Colors.Swat, JoinStyle = Style.Light,
+    },
+    suspect = {
+        Title = "ПОДОЗРЕВАЕМЫЕ", Header = { 0.36, 0.13, 0.015, 1 }, HeaderChosen = { 0.6, 0.24, 0.03, 1 },
+        Body = { 0.025, 0.012, 0.004, 0.96 }, Accent = Colors.Suspect, JoinStyle = Style.Red,
+    },
+}
+
+local Slots = 5    -- per team, as in a 5v5
+local MaxRows = 8  -- rows a card can show (players beyond five, the AI line)
 
 local Menu = {
-    Screen = nil,   -- address of the pre-mission screen the panel lives on
-    Panel = nil,
+    Screen = nil,   -- address of the pre-mission screen the page lives on
+    Page = nil,
+    Parts = nil,
     Buttons = {},   -- button address -> action
-    Widgets = {},
+    Shown = {},     -- widget -> last text, colour or label
     Hooked = nil,   -- address of the hooked OnClicked_Derived function
     Hidden = false,
     OnAction = nil, -- function(action) set by hb_pvp
@@ -48,11 +73,21 @@ local Menu = {
 
 ---------------------------------------------------------------- building blocks
 
-local function Make(tree, class)
+-- FMargin's fields are reflected as Left, top, Right, bottom in this build (FName casing), and UE4SS
+-- matches struct keys case-sensitively, so both spellings are given.
+local function Margin(left, top, right, bottom)
+    return { Left = left, Right = right, top = top, bottom = bottom, Top = top, Bottom = bottom }
+end
+
+local function Make(tree, class, name)
+    if name then return StaticConstructObject(StaticFindObject(Classes[class]), tree, name) end
     return StaticConstructObject(StaticFindObject(Classes[class]), tree)
 end
 
 local function Paint(text, color)
+    local key = table.concat(color, ",")
+    if Menu.Shown[text] == key then return end
+    Menu.Shown[text] = key
     pcall(function() text:SetColorAndOpacity({ SpecifiedColor = { R = color[1], G = color[2], B = color[3], A = 1 }, ColorUseRule = 0 }) end)
 end
 
@@ -68,25 +103,43 @@ local function Text(tree, value, size, color)
     return text
 end
 
-local function Panel(tree, rgba, padding)
+local function Fill(tree, rgba, left, top, right, bottom)
     local border = Make(tree, "Border")
     pcall(function() border.Background.DrawAs = 3 end) -- ESlateBrushDrawType::Image
     border:SetBrushColor({ R = rgba[1], G = rgba[2], B = rgba[3], A = rgba[4] })
-    border:SetPadding({ Left = padding, Top = padding, Right = padding, Bottom = padding })
+    border:SetPadding(Margin(left or 0, top or left or 0, right or left or 0, bottom or top or left or 0))
     return border
 end
 
-local function Add(box, child, top, bottom)
-    local slot = box:AddChild(child)
-    pcall(function() slot:SetPadding({ Left = 0, Top = top or 0, Right = 0, Bottom = bottom or 0 }) end)
-    return slot
+local function Recolor(border, rgba)
+    local key = table.concat(rgba, ",")
+    if Menu.Shown[border] == key then return end
+    Menu.Shown[border] = key
+    border:SetBrushColor({ R = rgba[1], G = rgba[2], B = rgba[3], A = rgba[4] })
 end
 
-local function Button(screen, label, style, action)
+local function Sized(tree, child, width, height)
+    local size = Make(tree, "Size")
+    if width then pcall(function() size:SetWidthOverride(width) end) end
+    if height then pcall(function() size:SetHeightOverride(height) end) end
+    size:SetContent(child)
+    return size
+end
+
+-- Adds to a vertical or horizontal box; pad = { left, top, right, bottom }.
+local function Add(box, child, pad, align, fill)
+    local slot = box:AddChild(child)
+    if pad then pcall(function() slot:SetPadding(Margin(pad[1] or 0, pad[2] or 0, pad[3] or 0, pad[4] or 0)) end) end
+    if align then pcall(function() slot:SetHorizontalAlignment(align) end) end
+    if fill then pcall(function() slot:SetSize({ SizeRule = SizeFill, Value = 1 }) end) end
+    return slot, child
+end
+
+local function Button(screen, label, style, action, size)
     local wbl = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
     local button = wbl:Create(screen, StaticFindObject(Classes.Button), screen:GetOwningPlayer())
     button.DisplayStyle = style
-    button.TextSize = 18
+    button.TextSize = size or 18
     button.ButtonText = FText(label)
     pcall(function() button:PreConstruct(false) end)
     pcall(function() button:SetButtonText(FText(label)) end)
@@ -95,107 +148,119 @@ local function Button(screen, label, style, action)
 end
 
 local function SetLabel(button, label)
-    if Menu.Widgets[button] ~= label then
-        Menu.Widgets[button] = label
+    if Menu.Shown[button] ~= label then
+        Menu.Shown[button] = label
         pcall(function() button:SetButtonText(FText(label)) end)
     end
 end
 
 local function SetText(text, value)
-    if Menu.Widgets[text] ~= value then
-        Menu.Widgets[text] = value
+    if Menu.Shown[text] ~= value then
+        Menu.Shown[text] = value
         text:SetText(FText(value))
+    end
+end
+
+local function Show(widget, on, shown)
+    local value = on and (shown or SelfHitTestInvisible) or Collapsed
+    if Menu.Shown[widget] ~= value then
+        Menu.Shown[widget] = value
+        widget:SetVisibility(value)
     end
 end
 
 ---------------------------------------------------------------- layout
 
-local function Column(screen, tree, title, color, background, joinLabel, joinStyle, joinAction)
-    local size = Make(tree, "Size")
-    pcall(function() size:SetWidthOverride(340) end)
-    local border = Panel(tree, background, 16)
-    size:SetContent(border)
+local function Card(screen, tree, key)
+    local team = Teams[key]
+    local body = Fill(tree, team.Body, 0)
     local box = Make(tree, "VBox")
-    border:SetContent(box)
-    local header = Text(tree, title, 24, color)
-    Add(box, header, 0, 8)
-    local lines = {}
-    for i = 1, Lines do
-        local line = Text(tree, "", 18, Colors.White)
-        line:SetVisibility(1) -- Collapsed until used
-        Add(box, line, 2, 2)
-        lines[i] = line
+    body:SetContent(box)
+
+    local header = Fill(tree, team.Header, 22, 16, 22, 16)
+    Add(box, header)
+    local headerRow = Make(tree, "HBox")
+    header:SetContent(headerRow)
+    Add(headerRow, Text(tree, team.Title, 32, Colors.White), nil, nil, true)
+    local count = Text(tree, "0 / 5", 28, Colors.White)
+    Add(headerRow, count, { 24, 4, 0, 0 })
+
+    local list = Make(tree, "VBox")
+    Add(box, list, { 22, 18, 22, 0 })
+    Add(list, Text(tree, "ИГРОКИ", 14, team.Accent), { 0, 0, 0, 8 })
+    local rows = {}
+    for i = 1, MaxRows do
+        local row = Fill(tree, { 0, 0, 0, 0.45 }, 14, 9, 14, 9)
+        local text = Text(tree, "", 20, Colors.White)
+        row:SetContent(text)
+        local _, holder = Add(list, row, { 0, 3, 0, 3 })
+        rows[i] = { Row = holder, Text = text }
     end
-    local join = Button(screen, joinLabel, joinStyle, joinAction)
-    Add(box, join, 14, 0)
-    return size, { Header = header, Lines = lines, Join = join }
+    local status = Text(tree, "", 16, team.Accent)
+    Add(list, status, { 0, 12, 0, 0 })
+    local join = Button(screen, "ВСТУПИТЬ", team.JoinStyle, key, 22)
+    Add(box, join, { 22, 14, 22, 22 })
+    return Sized(tree, body, 560), { Header = header, Count = count, Rows = rows, Status = status, Join = join }
 end
 
--- The panel's name carries a prefix, so a panel left by an earlier HostBrain (RestartMod drops the Lua
+-- The page's name carries a prefix, so a page left by an earlier HostBrain (RestartMod drops the Lua
 -- state, not the widgets) is found and removed. Names stay unique: reusing one would replace an object.
-local PanelPrefix = "HostBrainTeamMenu"
+local PagePrefix = "HostBrainTeamMenu"
 
-local function RemoveOldPanels(root)
+local function RemoveOldPages(root)
     for i = root:GetChildrenCount() - 1, 0, -1 do
         local child = root:GetChildAt(i)
-        if Valid(child) and child:GetFName():ToString():find(PanelPrefix, 1, true) == 1 then child:RemoveFromParent() end
+        if Valid(child) and child:GetFName():ToString():find(PagePrefix, 1, true) == 1 then child:RemoveFromParent() end
     end
 end
 
 local function Build(screen)
     local tree = screen.WidgetTree
     local root = tree.RootWidget
-    Menu.Buttons, Menu.Widgets = {}, {}
-    RemoveOldPanels(root)
+    Menu.Buttons, Menu.Shown = {}, {}
+    RemoveOldPages(root)
 
-    local name = FName(string.format("%s_%d_%d", PanelPrefix, os.time(), math.random(100000, 999999)))
-    local panel = StaticConstructObject(StaticFindObject(Classes.Border), tree, name)
-    pcall(function() panel.Background.DrawAs = 3 end)
-    panel:SetBrushColor({ R = 0.02, G = 0.02, B = 0.03, A = 0.88 })
-    panel:SetPadding({ Left = 26, Top = 26, Right = 26, Bottom = 26 })
-    local slot = root:AddChildToCanvas(panel)
-    slot:SetAnchors({ Minimum = { X = 0.5, Y = 0.5 }, Maximum = { X = 0.5, Y = 0.5 } })
-    slot:SetAlignment({ X = 0.5, Y = 0.5 })
-    slot:SetAutoSize(true)
-    slot:SetPosition({ X = 0, Y = -30 })
+    local name = FName(string.format("%s_%d_%d", PagePrefix, os.time(), math.random(100000, 999999)))
+    local page = Make(tree, "Border", name)
+    pcall(function() page.Background.DrawAs = 3 end)
+    page:SetBrushColor({ R = 0.01, G = 0.012, B = 0.016, A = 0.86 })
+    pcall(function() page:SetHorizontalAlignment(AlignCenter) end)
+    pcall(function() page:SetVerticalAlignment(AlignCenter) end)
+    local slot = root:AddChildToCanvas(page)
+    slot:SetAnchors({ Minimum = { X = 0, Y = 0 }, Maximum = { X = 1, Y = 1 } })
+    slot:SetOffsets(Margin(0, 0, 0, 0))
 
     local box = Make(tree, "VBox")
-    panel:SetContent(box)
-    local title = Text(tree, "ВЫБОР КОМАНДЫ", 32, Colors.White)
-    Add(box, title)
-    local subtitle = Text(tree, "", 16, Colors.Grey)
-    Add(box, subtitle, 2, 16)
+    page:SetContent(box)
+    Add(box, Text(tree, "ВЫБЕРИТЕ КОМАНДУ", 54, Colors.White), nil, AlignCenter)
+    local subtitle = Text(tree, "", 18, Colors.Grey)
+    Add(box, subtitle, { 0, 4, 0, 30 }, AlignCenter)
 
-    local columns = Make(tree, "HBox")
-    Add(box, columns)
-    local swatColumn, swat = Column(screen, tree, "SWAT", Colors.Swat, { 0.04, 0.08, 0.16, 0.92 },
-        "ИГРАТЬ ЗА SWAT", Style.Light, "swat")
-    columns:AddChild(swatColumn)
-    local gap = Make(tree, "Size")
-    pcall(function() gap:SetWidthOverride(16) end)
-    columns:AddChild(gap)
-    local suspectColumn, suspects = Column(screen, tree, "ПОДОЗРЕВАЕМЫЕ", Colors.Suspect, { 0.16, 0.04, 0.04, 0.92 },
-        "ИГРАТЬ ЗА ПОДОЗРЕВАЕМЫХ", Style.Red, "suspect")
-    columns:AddChild(suspectColumn)
+    local cards = Make(tree, "HBox")
+    Add(box, cards, nil, AlignCenter)
+    local swatCard, swat = Card(screen, tree, "swat")
+    Add(cards, swatCard, { 0, 0, 20, 0 })
+    local suspectCard, suspects = Card(screen, tree, "suspect")
+    Add(cards, suspectCard, { 20, 0, 0, 0 })
 
-    local settings = Make(tree, "HBox")
-    Add(box, settings, 16, 0)
+    local bar = Make(tree, "HBox")
+    Add(box, bar, { 0, 28, 0, 0 }, AlignCenter)
     local bots = Button(screen, "", Style.Dark, "bots")
     local accuracy = Button(screen, "", Style.Dark, "accuracy")
     local minutes = Button(screen, "", Style.Dark, "minutes")
-    for i, button in ipairs({ bots, accuracy, minutes }) do
-        local buttonSlot = settings:AddChild(button)
-        pcall(function() buttonSlot:SetPadding({ Left = i > 1 and 10 or 0, Top = 0, Right = 0, Bottom = 0 }) end)
+    local auto = Button(screen, "АВТОВЫБОР", Style.Dark, "auto")
+    for i, button in ipairs({ bots, accuracy, minutes, auto }) do
+        Add(bar, button, { i > 1 and 12 or 0, 0, 0, 0 })
     end
+    local ready = Button(screen, "ГОТОВ", Style.Yellow, "ready", 24)
+    Add(bar, Sized(tree, ready, 260), { 36, 0, 0, 0 })
 
-    local hint = Text(tree, "Выберите сторону и нажмите «Готов». Остальные игроки выбирают сторону в чате: !swat или !suspect", 15, Colors.Grey)
-    Add(box, hint, 14, 0)
-    local ready = Button(screen, "ГОТОВ", Style.Yellow, "ready")
-    Add(box, ready, 16, 0)
+    local hint = Text(tree, "Остальные игроки выбирают сторону в чате: !swat или !suspect · список команд: !teams", 15, Colors.Dim)
+    Add(box, hint, { 0, 18, 0, 0 }, AlignCenter)
 
-    Menu.Panel = panel
+    Menu.Page = page
     Menu.Parts = {
-        Subtitle = subtitle, Swat = swat, Suspects = suspects,
+        Subtitle = subtitle, Cards = { swat = swat, suspect = suspects },
         Bots = bots, Accuracy = accuracy, Minutes = minutes, Ready = ready,
     }
 end
@@ -217,17 +282,24 @@ local function HookClicks()
     if ok then Menu.Hooked = fn:GetAddress() else Log("team menu: cannot hook button clicks: %s", tostring(err)) end
 end
 
-local function FillColumn(column, entries)
-    for i, line in ipairs(column.Lines) do
+-- A card's rows: its players, then (SWAT) bots by squad name in the free slots or (suspects) the line
+-- for the mission's AI suspects, then free slots up to five.
+local function FillCard(card, key, entries, chosen)
+    local team = Teams[key]
+    Recolor(card.Header, chosen and team.HeaderChosen or team.Header)
+    for i, row in ipairs(card.Rows) do
         local entry = entries[i]
+        if not entry and i <= Slots then entry = { Text = "свободно", Color = Colors.Dim } end
         if entry then
-            SetText(line, entry.Text)
-            Paint(line, entry.Color)
-            line:SetVisibility(4) -- SelfHitTestInvisible
+            SetText(row.Text, entry.Text)
+            Paint(row.Text, entry.Color)
+            Show(row.Row, true)
         else
-            line:SetVisibility(1)
+            Show(row.Row, false)
         end
     end
+    SetText(card.Status, chosen and "ВЫ В ЭТОЙ КОМАНДЕ" or "")
+    SetLabel(card.Join, chosen and "ВЫ ЗДЕСЬ" or "ВСТУПИТЬ")
 end
 
 -- state: { Subtitle, Swat = {entries}, Suspects = {entries}, SwatCount, SuspectCount, HostTeam ("swat"|"suspect"),
@@ -237,7 +309,7 @@ function M.Show(screen, state, onAction)
     Menu.OnAction = onAction
     HookClicks()
     local address = screen:GetAddress()
-    if Menu.Screen ~= address or not Valid(Menu.Panel) then
+    if Menu.Screen ~= address or not Valid(Menu.Page) then
         Menu.Screen, Menu.Hidden = address, false
         local ok, err = pcall(Build, screen)
         if not ok then
@@ -247,26 +319,24 @@ function M.Show(screen, state, onAction)
         end
         Log("team menu shown on the pre-mission screen")
     end
-    Menu.Panel:SetVisibility(Menu.Hidden and 1 or 0)
+    Show(Menu.Page, not Menu.Hidden, Visible) -- Visible: the page takes the clicks meant for the screen under it
     if Menu.Hidden then return end
     local parts = Menu.Parts
     SetText(parts.Subtitle, state.Subtitle)
-    SetText(parts.Swat.Header, string.format("SWAT · %d", state.SwatCount))
-    SetText(parts.Suspects.Header, string.format("ПОДОЗРЕВАЕМЫЕ · %d", state.SuspectCount))
-    FillColumn(parts.Swat, state.Swat)
-    FillColumn(parts.Suspects, state.Suspects)
-    SetLabel(parts.Swat.Join, state.HostTeam == "swat" and "ВЫ ЗА SWAT" or "ИГРАТЬ ЗА SWAT")
-    SetLabel(parts.Suspects.Join, state.HostTeam == "suspect" and "ВЫ ЗА ПОДОЗРЕВАЕМЫХ" or "ИГРАТЬ ЗА ПОДОЗРЕВАЕМЫХ")
+    SetText(parts.Cards.swat.Count, string.format("%d / %d", state.SwatCount, Slots))
+    SetText(parts.Cards.suspect.Count, string.format("%d / %d", state.SuspectCount, Slots))
+    FillCard(parts.Cards.swat, "swat", state.Swat, state.HostTeam == "swat")
+    FillCard(parts.Cards.suspect, "suspect", state.Suspects, state.HostTeam == "suspect")
     SetLabel(parts.Bots, state.Bots and "БОТЫ SWAT: ВКЛ" or "БОТЫ SWAT: ВЫКЛ")
-    SetLabel(parts.Accuracy, "МЕТКОСТЬ БОТОВ: " .. state.Accuracy)
+    SetLabel(parts.Accuracy, "МЕТКОСТЬ: " .. state.Accuracy)
     SetLabel(parts.Minutes, string.format("ВРЕМЯ: %d МИН", state.Minutes))
-    SetLabel(parts.Ready, state.Ready and "ГОТОВ · ЖДЁМ ОСТАЛЬНЫХ" or "ГОТОВ")
+    SetLabel(parts.Ready, state.Ready and "ЖДЁМ ОСТАЛЬНЫХ" or "ГОТОВ")
 end
 
--- Collapses the panel until Reopen (the game's own "Swap teams" button brings it back).
+-- Collapses the page until Reopen (the game's own "Swap teams" button brings it back).
 function M.Hide()
     Menu.Hidden = true
-    if Valid(Menu.Panel) then pcall(function() Menu.Panel:SetVisibility(1) end) end
+    if Valid(Menu.Page) then pcall(function() Show(Menu.Page, false) end) end
 end
 
 function M.Reopen()
@@ -278,5 +348,6 @@ function M.IsHidden()
 end
 
 M.Colors = Colors
+M.Slots = Slots
 
 return M

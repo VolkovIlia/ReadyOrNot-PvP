@@ -575,7 +575,12 @@ local function MenuState(players, host)
         end
         if isHost then state.HostTeam = team == TeamSuspect and "suspect" or "swat" end
     end
-    if Settings.Bots then table.insert(state.Swat, { Text = "ИИ-отряд SWAT · 4 бота", Color = Colors.SwatBot }) end
+    if Settings.Bots then
+        -- the co-op squad's members, in the free slots as bots are in CS2
+        for _, name in ipairs({ "King", "Swan", "Prescott", "Eli" }) do
+            table.insert(state.Swat, { Text = "БОТ  " .. name, Color = Colors.SwatBot })
+        end
+    end
     local ai = #LivingAiSuspects()
     table.insert(state.Suspects, { Text = ai > 0 and string.format("ИИ-подозреваемые · %d", ai) or "ИИ-подозреваемые миссии", Color = Colors.SuspectAi })
     state.Subtitle = string.format("PvP · миссия %d мин · убитый подозреваемый вселяется в живого ИИ-подозреваемого", Settings.Minutes)
@@ -590,6 +595,19 @@ local function OnMenuAction(action)
     if not host or not Match.Active or Match.Phase ~= "briefing" then return end
     if action == "swat" or action == "suspect" then
         local team = action == "suspect" and TeamSuspect or TeamSwatBlue
+        if (Match.Teams[host.Name] or TeamSwatBlue) ~= team then Say(string.format("%s → %s", host.Name, TeamName(team))) end
+        Match.Teams[host.Name] = team
+        TeamButton.Label = nil
+    elseif action == "auto" then
+        -- the side with fewer players; on a tie the suspects (SWAT have the bots when they are on)
+        local swat, suspects = 0, 0
+        for _, player in ipairs(players) do
+            if player.Name ~= host.Name then
+                local team = Match.Teams[player.Name] or player.Team
+                if team == TeamSuspect then suspects = suspects + 1 else swat = swat + 1 end
+            end
+        end
+        local team = (suspects < swat or (suspects == swat and Settings.Bots)) and TeamSuspect or TeamSwatBlue
         if (Match.Teams[host.Name] or TeamSwatBlue) ~= team then Say(string.format("%s → %s", host.Name, TeamName(team))) end
         Match.Teams[host.Name] = team
         TeamButton.Label = nil
@@ -639,9 +657,9 @@ local function BriefingTick(now, players)
         Say(string.format("PvP: SWAT против подозреваемых · %d мин · %s. Подозреваемые воюют вместе с ИИ-подозреваемыми и после смерти вселяются в них",
             Settings.Minutes, Settings.Bots and "ИИ-отряд SWAT в игре" or "без ИИ-отряда SWAT"))
     end
-    -- the roster goes out when it changes, and as a reminder once a minute
+    -- the roster goes out when it changes (the host's team menu shows it all the time)
     local roster = Roster(players)
-    if roster ~= Match.LastRosterText or now - Match.LastRoster >= 60 then
+    if roster ~= Match.LastRosterText then
         Match.LastRoster, Match.LastRosterText = now, roster
         Say(roster .. ". Выбор стороны: у хоста кнопка «Поменять команды», у остальных — чат !swat или !suspect")
     end
@@ -803,8 +821,18 @@ local function AutoArm()
     Log("PvP armed on the pre-mission screen (auto)")
 end
 
+-- RonCompNative drops score popups while a match runs (Deps.SetNativePvp).
+local function SyncNativePvp()
+    local on = Match.Active and (Match.Phase == "live" or Match.Phase == "ended")
+    if Match.NativePvp ~= on and Deps.SetNativePvp then
+        Match.NativePvp = on
+        Deps.SetNativePvp(on)
+    end
+end
+
 function Pvp.Tick()
     if not Match.Active then AutoArm() end
+    SyncNativePvp()
     if not Match.Active then return end
     local now = C.WorldTime()
     if Match.Phase == "travel" then
@@ -866,6 +894,7 @@ end
 function Pvp.Stop()
     if Match.Active then SetSquadVariable(false) end
     Match.Active, Match.Phase = false, "idle"
+    SyncNativePvp()
 end
 
 function Pvp.Status(out)
@@ -879,7 +908,8 @@ function Pvp.Status(out)
     out(Roster(Players()))
 end
 
--- deps: EnsureGuards(), ResolveMap(name), StopOtherModes(), OtherModeActive(), FilterInstalled() from main.lua.
+-- deps: EnsureGuards(), ResolveMap(name), StopOtherModes(), OtherModeActive(), FilterInstalled(), SetNativePvp(on)
+-- from main.lua.
 function Pvp.RegisterCommands(Register, deps)
     Deps = deps
     local function ApplySettings(parts, first)
