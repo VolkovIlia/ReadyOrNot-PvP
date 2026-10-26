@@ -242,6 +242,88 @@
 - Какие ещё карты годятся для `ff`/`tdm` — нужен автоматический перебор с перезапуском после вылетов.
 - Как игра создаёт EOS-сессию лобби (чтобы HostBrain мог поднимать её сам).
 
+## Игрок за подозреваемых против ИИ SWAT (боты, 26.10.2026)
+
+Наблюдение:
+- Exec-функции разработчиков `ReadyOrNotPlayerController::SpawnBotsForGame`, `SpawnAI`, `StartSwatAutomation`
+  в Shipping пустые (декомпиляция: заглушки). Живы `SpawnRandomAI(Count)` («Spawn AI Console Command») и
+  `SpawnAIAtLocation` (не проверялась).
+- Ко-оп `RoN_Campus_Core?game=BS_COOP` из меню: отряд ИИ SWAT (4× `CyberneticsSwat_V2_C` + 4× `CyberneticsSwatTrailer_C`,
+  команды 1/2), 5 подозреваемых (`TT_SUSPECT`), 9 гражданских; игрок — команда 2.
+- `ReadyOrNotPlayerState::SetTeam(3)` команду не меняет. Работает прямая запись `PlayerState.Team = 3` +
+  `Character.DefaultTeam = 3` (+ `OnRep_Team`): `CyberneticController::IsCharacterEnemy(player)` становится true у SWAT
+  и гражданских и false у подозреваемых.
+- Отряд SWAT без приказов пассивен и продолжает следовать за игроком (он их лидер). После урона от игрока
+  (`GameplayStatics::ApplyDamage`) `GetTrackedTarget()` = игрок, все целятся в него (скриншот).
+- При переходе из идущей миссии появляется предмиссионный экран `W_PreMission_C`. `ReadyOrNotPlayerController::ReadyUp()`
+  его проходит: `PlayerState.bReady` становится true примерно через 4 с после вызова, затем идёт штатный отсчёт
+  `GameState.TimeTillGameStartCountdown` 10 → 0, и игрок появляется (READYWATCH-лог, 26.10.2026). Повторный вызов
+  через 3,5 с готовность не сбрасывает.
+
+- **ИИ SWAT по игроку-подозреваемому сам не стреляет**, даже когда тот убивает бойцов: у живых бойцов
+  `IsCharacterKnownEnemy(player)=true`, игрок в `TargetingComponent.KnownEnemies`, `GetTrackedTarget()=player`,
+  активность `SwatCombatActivity` — но правила огня его не пропускают. `CyberneticsSwatTrailer_C` — не бойцы
+  (списки целей пусты). Обход: `BaseCombatActivity::ScriptedFireAtActor(player, t, bOverrideTarget=true, accuracy, false)` —
+  двое видевших бойцов убили игрока за 3,5 с (160 → 0). HostBrain раз в 0,5 с отдаёт короткие очереди тем, кто видит игрока.
+
+Вывод: HostBrain `comp_play_suspect <карта>` — спавн как SWAT (у ко-оп карт нет точек старта подозреваемых),
+затем переход в `TT_SUSPECT` и телепорт к ИИ-подозреваемым; после смерти команда временно возвращается в SWAT.
+`comp_alert` натравливает SWAT. Внешность остаётся SWAT — модель MLO ещё не подставлена.
+
+### Раунды против ИИ SWAT (26.10.2026)
+
+Сообщения на экран хоста (проверено скриншотами, кириллица отображается):
+- `W_HumanCharacter_HUD_V2_C::AddObjectivePopup(FText)` — строка внизу по центру.
+- `AddToast(FString)` — плашка слева.
+- `AddScorePopup(FText, int, bool)` — «… +N».
+- `PlayerCharacter::Client_SendToast` и `ReadyOrNotGameState::Multicast_BroadcastChatMessage` возвращают ok, но ничего не видно.
+- Экран смерти («БОЕЦ УБИТ») закрывает HUD, поэтому итог раунда повторяется после перезагрузки миссии.
+- Пешка после смерти — `DeadSpectator_C`, до спавна — `SpectatorPawn`.
+
+Приказы отряду:
+- Сначала `SWATManager.SquadLeader` = живой `CyberneticsSwat_V2_C`; без этого отряд следует за игроком-лидером.
+- Дальше приказы с `TeamType = TT_SQUAD (5)`.
+- `GiveMoveCommand(5, точка)`: 39 → 19 м по прямой за 30 с. В HUD отряда отображается «Идти к».
+- `GiveSearchAndSecureCommand(5, точка, false)`: зачистка комнат («Исключить, зачистить», «Осмотр: угол»), к цели 49 → 46 м за 20 с.
+
+Знания бота об игроке:
+- `CyberneticController::IsCharacterKnownEnemy`;
+- `TargetingComponent::CanCharacterBeSeen` / `GetLastKnownEnemyPosition`;
+- `CyberneticController::GetHeardActorInstigator`;
+- `HasBeenExposedToAggressiveNoise(sec, dist, mask)`;
+- выстрелы идут через RPC `BaseMagazineWeapon::Server_OnFire` и `Multicast_OnFire`. HostBrain перехватывает их,
+  чтобы отметить место выстрела игрока.
+
+Снаряжение (`BpGameplayHelperLib::EquipLoadoutOnPlayer`):
+- **Оружие ИИ-подозреваемых (`/Game/Blueprints/Items/WeaponsSuspect/*`) игроку давать нельзя.** Магазинов у него нет.
+  Если достать подозреваемый пистолет (`Secondary_S_Python` и др.), ломается анимация от первого лица, игрока
+  выбрасывает с карты, он погибает (`DeadSpectator_C`).
+- Оружие игрока из `/Game/Blueprints/Items/WeaponsRevised` с `PrimaryAmmoSlotsCount = -1` / `SecondaryAmmoSlotsCount = -1`
+  получает штатные магазины: AK-103 — 4×30, P99 — 3×15. Так же устроены 8 случайных наборов
+  `Default__GM_Firefight_C.RandomLoadouts`, но это наборы SWAT.
+- В `PlayerState.ServerSavedLoadout` у ко-оп игрока явные слоты: `556x45FMJ` ×5, `PrimaryAmmunition = Null_AmmunitionAttachment_C`.
+- Броня снимается. Гранаты и тактические устройства из предмиссионного набора остаются, даже если в наборе
+  `GrenadeSlotsCount = 0`.
+- Оружие игрока в стиле подозреваемых: `Primary_AK102`, `Primary_AK103`, `Primary_SLR47`, `Primary_Saiga12`,
+  `Primary_G3A3`, `Primary_FAL`, `Primary_870mcs`.
+
+Прочее:
+- В UE4SS функция, возвращающая TArray (`InventoryComponent::GetInventoryItems`), отдаёт Lua-таблицу.
+  Свойство `InventoryItems` — TArray с `ForEach`.
+- Телепорт через `K2_SetActorLocation(..., bTeleport=true)` без проверки может поставить игрока в стол или стул.
+  `AActor::K2_TeleportTo` отказывает или выталкивает из пересечения: из застрявшей позиции сдвинул на 76 см.
+  HostBrain дополнительно проверяет трассировками `LineTraceSingle`, что подозреваемый видит точку и под ней есть пол.
+
+Внешность подозреваемого (не сделано, зацепки):
+- `ReadyOrNotCharacter::UpdateOverridesFromCharacterLookOverrideDataTable(LookOverride)` (Exec) применяет строку
+  таблицы образов.
+- Реплицируемые `Rep_CharacterLookOverride` (FString, `OnRep_CharacterLookOverride`) и `Rep_FPMesh`.
+- Структура `CharacterLookOverride` содержит `FPMeshOverride`. У ко-оп игрока `SavedLoadout.CharacterLookOverride = "SWAT_Judge"`.
+- `BpGameplayHelperLib::GetCharacterLookOverrideDataTable()` в ко-оп миссии вернул `nil`: таблица не загружена.
+  `Default__GM_Defusal_C.CharacterLookMap` пуст.
+- Ассеты играбельного подозреваемого: руки `Character/MLO/ron_suspect_fp_player_mlo`, материалы `PVP__MI_MLO_*`,
+  флаг анимации `ReadyOrNotAnimInstance.bIsTeamMLO`.
+
 ## Регистрация попаданий (S4)
 
 Метод: JMAP-дамп рефлексии (RPC-сигнатуры, значения CDO по умолчанию с учётом ini), строки exe.
