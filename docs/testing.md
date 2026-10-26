@@ -23,6 +23,10 @@
    Зонд выполнит его на игровом потоке в течение секунды и переименует в `inbox.done.lua`.
    В скрипте доступны `State()`, `Exec(cmd)`, `CallStatic(class, fn, ...)`, `Get(obj, prop)`, `PC()`, `GM()`, `GS()`, `World()`,
    `Shot(tag)`, `Log(fmt, ...)`, `Quit()`.
+   Задержки и циклы в скриптах — только `ExecuteInGameThreadWithDelay` / `LoopInGameThreadWithDelay`:
+   `ExecuteWithDelay`/`LoopAsync` исполняют Lua на рабочем потоке UE4SS и со временем роняют игру
+   (docs/re-findings.md, «Краш через ~2 ч игры»). `obj:GetClass()` вызывать только после `obj:IsValid()`:
+   на нулевом объекте UE4SS читает `+0x10` и игра падает. `ApplyDamage` — только с инстигатором и причиной.
 4. Вывод пишется в `Mods/RonCompProbe/probe.log`.
 5. Скриншоты сохраняются в `<игра>/ReadyOrNot/Ready Or Not/Saved/Screenshots/`:
    `Exec("shot showui")` снимает кадр с интерфейсом, `HighResShot 1` — только 3D-сцену.

@@ -350,6 +350,72 @@
 `RetriggerableExecuteInGameThreadWithDelay`, `CancelDelayedAction`, `RegisterEngineTickPre/PostCallback`.
 Ghidra по UE4SS.dll: `tools/ghidra_decompile.ps1 -Binary ...\ue4ss\UE4SS.dll -Project UE4SS <VA>` (база 0x180000000).
 
+## Скрытый ко-оп PvP «SWAT против подозреваемых» (26.10.2026)
+
+Наблюдение (декомпиляция и проверка в игре):
+- **Флаг режима: `CoopGS.bCrouchingTigerHiddenDragon`** (смещение 0xa7d, `CPF_Net | RepNotify`, `OnRep_CrouchingTigerHiddenDragon`).
+  Рядом лежат `CoopGS.PvPState` (`EPvPState`, реплицируется), `PreRoundRemainingTime`, `ActorsToHandleInPvP`,
+  а у `CoopGM` — `PreRoundTimeout`.
+  - Запись `0xa7d` в exe есть только в конструкторах `CoopGS` (обнуление, `tools/ghidra_decompile.ps1` + скан смещения).
+    Включать режим должны были `a.Ron.PVP.Start` / `a.Ron.PVP.Unlock`, но в Shipping эти консольные команды
+    (флаг `ECVF_Cheat`) привязаны к функции из одного `RET` (`0x140b07d90`).
+  - Проверки флага: `FUN_144e3ad60(GameState)` и `FUN_144e3adb0()`. Вторую вызывает
+    `ReadyOrNotFunctionLibrary::IsSecretPvP`: после записи флага с хоста она возвращает `true`.
+- **Что игра меняет сама при флаге:**
+  - `IsEnemyTeam(a, b)` → «команды разные», `IsFriendlyTeam` → «команды совпадают» (`FUN_144de8200/8290/8330`);
+  - `IsOnSameTeam` (`FUN_144e76f90`) → сравнение `GetTeam()`;
+  - список камер команды (`PlayerCharacter::GetAvaliablePlayersForTeamView`) и кандидаты наблюдения
+    (`SpectatePawn::SpectateNextPlayer` → `FUN_144b85dd0`) — только своя команда;
+  - очередь радиосообщений (`FUN_144dc7730` и соседи) не пополняется;
+  - автораспределение по командам при входе (`FUN_144ea4940`) выключено.
+- **ИИ флаг не трогает.** `IsCharacterEnemy` у ИИ SWAT, ИИ-подозреваемых и гражданских с флагом и без одинаков:
+  ИИ SWAT не стреляют в гражданских.
+- **Отряд ИИ SWAT есть только в одиночной миссии.** В `open <map>?listen?game=BS_COOP` (хост-сервер) нет ни одного
+  `CyberneticsSwat_V2_C`, и не важно, игрок хоста за SWAT или нет и стоит ли флаг.
+- **Старт миссии.** Отряд ИИ создаётся вокруг пешки игрока 0 (`ACoopGM`, `FUN_144c02290`: `defaultblueone`…`trailer`,
+  `&ACoopGM::FriendlyAIKilled`). Если у хоста нет пешки (команда 3 до спавна), запасная ветка вызывает нулевой
+  указатель, и игра падает. Без флага та же команда 3 давала фатал «Couldn't spawn player»; с флагом пешки просто нет.
+  Поэтому все появляются как SWAT и переводятся после спавна.
+- `ReadyOrNotPlayerController::Server_SetTeamType` меняет команду только на предмиссионном экране.
+  В идущей миссии работает прямая запись `PlayerState.Team` и `OnRep_Team`.
+- **Спавн игроков.** Игра не вызывает `GameModeBase::RestartPlayer` / `K2_OnRestartPlayer` (хук не срабатывает).
+  Спавн на старте миссии берёт набор не из `PlayerState.ServerSavedLoadout`. Помогает
+  `BpGameplayHelperLib::EquipLoadoutOnPlayer` с `Armor_NoArmor_C` / `Helmet_None_C` — так снимаются броня и шлем.
+- **`ReadyOrNotGameMode::RespawnPlayer`** (`vtable+0x9e8` → `0x144ed2700`):
+  - `CurrentMatchState` = Warmup/MatchEnded — спавнит у старта;
+  - `MS_Playing` — только команды 1/2 с `PlayerState.bIsInGame`;
+  - в режиме с флагом убитый игрок возвращается наблюдателем (`a.Ron.PVP.ForceRespawnAsSpectatorWhenKilled = 1`).
+- **`ReadyOrNotGameMode::SpawnPlayerCharacter(PC, GameMode.DefaultPawnClass, Transform, bNoFail)`**:
+  - Transform собирается через `KismetMathLibrary::MakeTransform`;
+  - персонаж появляется ровно в точке, контроллер вселяется сам;
+  - команда берётся из `PlayerState.Team`, снаряжение — из `ServerSavedLoadout` (SBR 4 магазина, Python 3, без брони).
+- `CoopGM::MissionEnd(bSuccess)` открывает штатный экран итогов («НЕ ПРОЙДЕНО» при `false`).
+- `CoopGM.bOverrideSuspectCustomizationInPvp = true`, `SuspectPlayerCustomizationOverride` — штатная одежда игрока-подозреваемого:
+  `CSK_RapidResponse_Shirt_Buttoned`, `CSK_DETE_Pants`, `CSK_Swat_NoGlove`.
+
+**Фильтр SWAT-действий (RonCompNative).** Подменяет `UFunction::Func` у серверных RPC. Найденная раскладка:
+- `UFunction::Func` = `+0xd8` (единственный указатель в `.text`);
+- `UStruct::SuperStruct` = `+0x40`;
+- `FFrame::Code` = `+0x20`, `FFrame::Locals` = `+0x28`;
+- `AReadyOrNotCharacter::DefaultTeam` = `+0x1129`.
+
+Проверка в миссии: у персонажа команды 2 `Server_Yell` проходит. С `DefaultTeam = 3` блокируются `Server_Yell`,
+`Server_Interact` (цель — гражданский) и `Server_GiveAIMoveToExit`. Вызов из байткода Blueprint (`Code != 0`)
+фильтр пропускает и пишет в лог: параметры такого вызова ещё не прочитаны из кода вызывающего.
+
+Ловушки UE4SS, на которых падала игра:
+- `obj:GetClass()` на нулевом объекте читает `+0x10`;
+- `GameplayStatics::ApplyDamage` с пустым инстигатором роняет `TakeDamage` игры.
+
+Вывод: HostBrain `comp_pvp` (`hb_pvp.lua`):
+- ставит флаг (а с ботами — после появления отряда);
+- проводит выбор команд на предмиссионном экране;
+- переводит подозреваемых на места ИИ-подозреваемых в первом кадре их пешки;
+- после смерти создаёт игрока через `SpawnPlayerCharacter` на месте другого ИИ;
+- завершает миссию через `MissionEnd`.
+
+С ботами в сетевой игре режим работает без ИИ-отряда: штатно его нет.
+
 ## Регистрация попаданий (S4)
 
 Метод: JMAP-дамп рефлексии (RPC-сигнатуры, значения CDO по умолчанию с учётом ini), строки exe.
