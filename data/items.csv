@@ -1,0 +1,46 @@
+id,name,category,faction,price,kill_reward,max_carry,cs2_analog,game_item,notes
+usp,USP,pistol,swat,200,300,1,USP-S,/Game/Blueprints/Items/WeaponsRevised/Secondary_USP.Secondary_USP_C,default SWAT pistol
+p250,P250,pistol,any,300,300,1,P250,/Game/Blueprints/Items/WeaponsRevised/Secondary_P250.Secondary_P250_C,
+m92fs,M92FS,pistol,swat,300,300,1,Dual Berettas,/Game/Blueprints/Items/WeaponsRevised/Secondary_M92FS_V2.Secondary_M92FS_V2_C,
+m1911,M1911,pistol,swat,400,300,1,P250+,/Game/Blueprints/Items/WeaponsRevised/Secondary_M1911_V2.Secondary_M1911_V2_C,
+fiveseven,Five-seveN,pistol,swat,500,300,1,Five-SeveN,/Game/Blueprints/Items/WeaponsRevised/Secondary_FiveSeven_V2.Secondary_FiveSeven_V2_C,
+python,Python,pistol,swat,700,300,1,Desert Eagle,/Game/Blueprints/Items/WeaponsRevised/Secondary_Python_V2.Secondary_Python_V2_C,
+g19s,Glock 19,pistol,suspects,200,300,1,Glock-18,/Game/Blueprints/Items/WeaponsSuspect/Secondary_S_G19.Secondary_S_G19_C,default suspect pistol; player use unverified
+makarov,Makarov,pistol,suspects,300,300,1,P250,/Game/Blueprints/Items/WeaponsSuspect/Secondary_Makarov.Secondary_Makarov_C,player use unverified
+tec9,Tec-9,pistol,suspects,500,300,1,Tec-9,/Game/Blueprints/Items/WeaponsSuspect/Secondary_Tec9.Secondary_Tec9_C,player use unverified
+g18,Glock 18,pistol,suspects,500,100,1,CZ75-Auto,/Game/Blueprints/Items/WeaponsSuspect/Secondary_S_G18.Secondary_S_G18_C,player use unverified
+spython,Python (S),pistol,suspects,700,300,1,Desert Eagle,/Game/Blueprints/Items/WeaponsSuspect/Secondary_S_Python.Secondary_S_Python_C,player use unverified
+mp9,MP9,smg,swat,1250,600,1,MP9,/Game/Blueprints/Items/WeaponsRevised/Primary_MP9.Primary_MP9_C,
+ump45,UMP-45,smg,swat,1200,600,1,UMP-45,/Game/Blueprints/Items/WeaponsRevised/Primary_UMP45_v2.Primary_UMP45_v2_C,
+mp7,MP7,smg,swat,1400,600,1,MP7,/Game/Blueprints/Items/WeaponsRevised/Primary_MP7.Primary_MP7_C,
+mp5a3,MP5A3,smg,swat,1500,600,1,MP5-SD,/Game/Blueprints/Items/WeaponsRevised/Primary_MP5A3.Primary_MP5A3_C,
+p90,P90,smg,swat,2350,300,1,P90,/Game/Blueprints/Items/WeaponsRevised/Primary_P90.Primary_P90_C,
+uzi,Uzi,smg,suspects,1050,600,1,MAC-10,/Game/Blueprints/Items/WeaponsSuspect/Primary_Uzi.Primary_Uzi_C,player use unverified
+calico,Calico,smg,suspects,1200,600,1,UMP-45,/Game/Blueprints/Items/WeaponsSuspect/Primary_Calico.Primary_Calico_C,player use unverified
+aks74u,AKS-74U,smg,suspects,1400,600,1,MP7,/Game/Blueprints/Items/WeaponsSuspect/Primary_AKS74U.Primary_AKS74U_C,player use unverified
+nova,870 MCS,shotgun,swat,1050,900,1,Nova,/Game/Blueprints/Items/WeaponsRevised/Primary_870mcs.Primary_870mcs_C,
+benelli,Benelli M4,shotgun,swat,2000,600,1,XM1014,/Game/Blueprints/Items/WeaponsRevised/Primary_Benelli_M4.Primary_Benelli_M4_C,
+s870,870 (S),shotgun,suspects,1050,900,1,Nova,/Game/Blueprints/Items/WeaponsSuspect/Primary_S_870mcs.Primary_S_870mcs_C,player use unverified
+sawnoff,Sawn-Off,shotgun,suspects,1100,900,1,Sawed-Off,/Game/Blueprints/Items/WeaponsSuspect/Primary_SawnOff.Primary_SawnOff_C,player use unverified
+trenchgun,Trench Gun,shotgun,suspects,1300,900,1,MAG-7,/Game/Blueprints/Items/WeaponsSuspect/Primary_Trenchgun.Primary_Trenchgun_C,player use unverified
+g36c,G36C,rifle,swat,2050,300,1,FAMAS,/Game/Blueprints/Items/WeaponsRevised/Primary_G36C.Primary_G36C_C,
+m4a1,M4A1,rifle,swat,2900,300,1,M4A1-S,/Game/Blueprints/Items/WeaponsRevised/Primary_M4A1.Primary_M4A1_C,
+hk416,HK416,rifle,swat,3100,300,1,M4A4,/Game/Blueprints/Items/WeaponsRevised/Primary_HK416.Primary_HK416_C,
+scarl,SCAR-L,rifle,swat,3300,300,1,AUG,/Game/Blueprints/Items/WeaponsRevised/Primary_SCARL_v2.Primary_SCARL_v2_C,
+qbz,QBZ,rifle,suspects,1800,300,1,Galil AR,/Game/Blueprints/Items/WeaponsSuspect/Primary_QBZ.Primary_QBZ_C,player use unverified
+akm,AKM,rifle,suspects,2700,300,1,AK-47,/Game/Blueprints/Items/WeaponsSuspect/Primary_AKM.Primary_AKM_C,player use unverified
+ak104,AK-104,rifle,suspects,2700,300,1,AK-47,/Game/Blueprints/Items/WeaponsSuspect/Primary_AK104.Primary_AK104_C,player use unverified
+sg3a3,G3A3 (S),rifle,suspects,3000,300,1,SG 553,/Game/Blueprints/Items/WeaponsSuspect/Primary_S_G3A3.Primary_S_G3A3_C,player use unverified
+m14,M14,marksman,any,1700,300,1,SSG 08,/Game/Blueprints/Items/WeaponsRevised/Primary_M14.Primary_M14_C,
+m24,M24,marksman,any,4750,100,1,AWP,/Game/Blueprints/Items/WeaponsRevised/Sniper_M24.Sniper_M24_C,
+rpd,RPD,lmg,suspects,1700,300,1,Negev,/Game/Blueprints/Items/WeaponsSuspect/Primary_RPD.Primary_RPD_C,player use unverified
+m249,M249,lmg,suspects,5200,300,1,M249,/Game/Blueprints/Items/WeaponsSuspect/Primary_M249.Primary_M249_C,player use unverified
+knife,Knife,melee,suspects,0,1500,1,Knife,/Game/Blueprints/Items/WeaponsSuspect/Melee_Knife.Melee_Knife_C,default suspect melee; player use unverified
+armor_light,Light Armor,armor,any,650,0,1,Kevlar Vest,/Game/Blueprints/Items/ArmorRevised/Armor_Light_V2.Armor_Light_V2_C,
+armor_heavy,Heavy Armor,armor,any,1000,0,1,Kevlar + Helmet,/Game/Blueprints/Items/ArmorRevised/Armor_Heavy_V2.Armor_Heavy_V2_C,heavier: slower movement in RoN
+flashbang,Flashbang,grenade,any,200,300,2,Flashbang,/Game/Blueprints/Items/WeaponsRevised/Grenade_Flashbang_V2.Grenade_Flashbang_V2_C,
+smoke,Smoke,grenade,any,300,300,1,Smoke Grenade,/Game/Blueprints/Items/WeaponsRevised/Grenade_Smoke_V2.Grenade_Smoke_V2_C,
+stinger,Stinger,grenade,swat,300,300,1,HE Grenade,/Game/Blueprints/Items/WeaponsRevised/Grenade_Stinger_V2.Grenade_Stinger_V2_C,
+frag,Frag,grenade,suspects,300,300,1,HE Grenade,/Game/Blueprints/Items/WeaponsRevised/Grenade_Frag.Grenade_Frag_C,
+csgas,CS Gas,grenade,swat,500,300,1,Incendiary,/Game/Blueprints/Items/WeaponsRevised/Grenade_CSGas_V2.Grenade_CSGas_V2_C,area denial
+defuse_kit,Multitool (defuse kit),kit,defenders,400,0,1,Defuse Kit,/Game/Blueprints/Items/WeaponsRevised/Device_Multitool_v2.Device_Multitool_v2_C,faction column 'defenders' = whichever side defends

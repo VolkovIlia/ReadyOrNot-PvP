@@ -1,0 +1,35 @@
+# Build outputs
+build/
+out/
+*.o
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.dll
+*.lib
+
+# Unreal project artifacts (ModKit)
+ModKit/Binaries/
+ModKit/Intermediate/
+ModKit/Saved/
+ModKit/DerivedDataCache/
+ModKit/.vs/
+ModKit/*.sln
+
+# Reverse-engineering dumps and game extracts are large and derived from the game: never commit
+re/dumps/
+re/extract/
+re/evidence/*.json
+re/tmp/
+
+# Downloaded third-party tools
+tools/bin/
+
+# Editors / OS
+.vs/
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store
