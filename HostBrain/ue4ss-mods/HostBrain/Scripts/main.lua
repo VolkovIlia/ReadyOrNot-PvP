@@ -16,6 +16,8 @@
 --   comp_pvp_team <player|me> swat|suspect
 --                               put a player on a team (players can also type !swat / !suspect)
 --   comp_pvp_time <min> [takeover s], comp_pvp_bots <on|off> [aim], comp_pvp_status, comp_pvp_end
+--   comp_pvp_auto <on|off>      offer the team choice on every co-op pre-mission screen (default on;
+--                               bots, minutes and this are kept in settings.txt)
 --   comp_start <map> [mode] [force]
 --                               host a PvP match (default mode: ff); from a hosted lobby it server-travels
 --                               everyone, otherwise it opens a new listen server. Unverified map/mode
@@ -392,6 +394,7 @@ Pvp.RegisterCommands(Register, {
     EnsureGuards = EnsureGuards,
     ResolveMap = ResolveMap,
     StopOtherModes = function() Solo.Stop() end,
+    OtherModeActive = function() return Solo.Active() end,
     FilterInstalled = function() return State.FilterInstalled end,
 })
 

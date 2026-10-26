@@ -5,12 +5,15 @@
 -- spectating within a team and drops the SWAT radio chatter. The console commands that switched it on
 -- (a.Ron.PVP.Start/Unlock) are empty in the shipping build, so HostBrain sets the flag and adds the
 -- rules of the mode:
---   * teams are chosen on the pre-mission screen (host command comp_pvp_team, chat !swat / !suspect);
+--   * teams are chosen on the pre-mission screen (the host's team button, chat !swat / !suspect,
+--     host command comp_pvp_team);
 --   * a suspect player takes an AI suspect's place at the start and, after every death, takes over
 --     another living AI suspect that no SWAT can see, while any are left; suspects carry suspect guns
 --     and clothes, no armour and no SWAT gear;
 --   * SWAT win by the mission rules (every AI suspect and suspect player out, nobody left to take
---     over); suspects win by taking out every SWAT player or by holding out for the time limit.
+--     over); suspects win by taking out every SWAT player or by holding out for the time limit;
+--   * with bots the mission's AI SWAT squad fights for SWAT: it follows a living SWAT player, and with
+--     none it hunts the suspect players on its own (hb_hunt), whichever side the host plays.
 --
 -- Everybody spawns as SWAT: co-op maps have no suspect starts, and the mission start spawns the AI
 -- squad around the host's pawn, so a host without a pawn crashes the game (ACoopGM friendly-AI spawn,
@@ -20,6 +23,7 @@
 local UEHelpers = require("UEHelpers")
 local C = require("hb_common")
 local L = require("hb_loadout")
+local H = require("hb_hunt")
 
 local Log, Valid, Exec = C.Log, C.Valid, C.Exec
 local TeamSwatRed, TeamSwatBlue, TeamSuspect, CoopMode = C.TeamSwatRed, C.TeamSwatBlue, C.TeamSuspect, C.CoopMode
@@ -28,9 +32,12 @@ local IsDown, Location, Distance, LivingSwat, TraceBlocked = C.IsDown, C.Locatio
 local Pvp = {}
 local Deps = {} -- from main.lua (Pvp.RegisterCommands)
 
+-- Auto, Bots and Minutes are kept in the mod's settings.txt (C.SaveSetting).
+local Saved = C.LoadSettings()
 local Settings = {
-    Bots = false,        -- give SWAT the mission's AI squad (it follows the host, so the host plays SWAT)
-    Minutes = 15,        -- suspects win when they hold out this long
+    Auto = Saved.pvp_auto ~= "0",   -- offer the team choice on every co-op mission's pre-mission screen
+    Bots = Saved.pvp_bots ~= "0",   -- give SWAT the mission's AI squad
+    Minutes = tonumber(Saved.pvp_minutes or "") or 10, -- suspects win when they hold out this long
     RespawnDelay = 10,   -- seconds from a suspect player's death to taking over an AI suspect
     SafeDistance = 1000, -- cm: an AI suspect this close to a SWAT is not taken over
     BotAccuracy = 2.0,   -- AI SWAT aim penalty against suspect players (1 = normal aim)
@@ -51,7 +58,11 @@ local Match = {
     Stripped = {},    -- pawn address -> true once its SWAT gear is gone
     Removed = {},     -- address -> true for AI suspects taken over (gone at the end of the frame)
     LastRoster = -math.huge,
-    Bots = false,      -- this mission has the AI squad (Settings.Bots and a SWAT host)
+    Bots = false,      -- this mission has the AI squad
+    Auto = false,      -- armed by Settings.Auto rather than by comp_pvp
+    AutoWorld = nil,   -- world generation Settings.Auto last armed the mode in
+    LastRosterText = nil,
+    HostWait = nil,    -- world time the host's first pawn started waiting for the squad to spawn
     SquadVariable = nil, -- value last set for a.RonSpawnSwatInIncompatibleMode
     SquadSeen = false, -- the AI squad spawns a little after the players
     Warned = {},
@@ -124,8 +135,7 @@ end
 -- has spawned.
 -- The game spawns the AI squad of a co-op mission only in single player, unless
 -- a.RonSpawnSwatInIncompatibleMode is 1 ("always spawn the swat ... even if it's a multiplayer game",
--- not a cheat variable). The squad forms around the host, so it is only asked for when the host plays
--- SWAT, and switched off again once the mission has started.
+-- not a cheat variable). It is switched off again once the mission has started.
 local function SetSquadVariable(on)
     local value = on and 1 or 0
     if Match.SquadVariable == value then return end
@@ -134,9 +144,11 @@ local function SetSquadVariable(on)
     Log("AI squad in multiplayer missions: %s", on and "on" or "off")
 end
 
-local function HostName()
-    local ok, name = pcall(function() return UEHelpers.GetPlayerController().PlayerState:GetPlayerName():ToString() end)
-    return ok and name or nil
+-- State of one mission; teams chosen and settings carry over.
+local function ResetMission()
+    Match.Suspects, Match.Converts, Match.Stripped, Match.Removed = {}, {}, {}, {}
+    Match.SquadSeen, Match.HostWait, Match.LastRoster, Match.LastRosterText = false, nil, -math.huge, nil
+    Match.HostConfirmed, Match.HoldTold = false, false
 end
 
 local function EnablePvpFlags()
@@ -339,24 +351,30 @@ local function DirectSwatFire(players)
     end
 end
 
--- The AI squad follows its leader; it must never follow a suspect player.
-local function KeepSquadOnSwat(players)
-    local manager = FindFirstOf("SWATManager")
-    if not Valid(manager) then return end
+-- The AI squad follows its leader and must never follow a suspect player. A living SWAT player leads
+-- it as in co-op; without one an AI SWAT leads and the squad hunts the suspect players on its own.
+local function DirectSquad(now, players)
+    local swat = LivingSwat()
+    local manager = H.SquadManager()
+    if #swat == 0 or not manager then return end
+    local leaders, targets = {}, {}
+    for _, player in ipairs(players) do
+        if player.Pawn then
+            if Match.Suspects[player.Name] then targets[#targets + 1] = player.Pawn else leaders[#leaders + 1] = player.Pawn end
+        end
+    end
+    if #leaders == 0 then
+        H.Lead(manager, swat, targets)
+        H.Direct(now, targets, swat)
+        return
+    end
     local leader = manager.SquadLeader
     if Valid(leader) and not IsDown(leader) then
-        local address = leader:GetAddress()
-        local leaderIsSuspect = false
-        for _, player in ipairs(players) do
-            if player.Pawn and player.Pawn:GetAddress() == address and Match.Suspects[player.Name] then leaderIsSuspect = true end
+        for _, pawn in ipairs(leaders) do
+            if pawn:GetAddress() == leader:GetAddress() then return end
         end
-        if not leaderIsSuspect then return end
     end
-    for _, player in ipairs(players) do
-        if not Match.Suspects[player.Name] and player.Pawn then manager.SquadLeader = player.Pawn return end
-    end
-    local swat = LivingSwat()
-    if #swat > 0 then manager.SquadLeader = swat[1] end
+    manager.SquadLeader = leaders[1]
 end
 
 ---------------------------------------------------------------- match flow
@@ -379,21 +397,11 @@ local function StartLive(now, players)
         if Match.Suspects[player.Name] then suspectPlayers = suspectPlayers + 1 else swatPlayers = swatPlayers + 1 end
     end
     if suspectPlayers == 0 and not Settings.Test then
-        Say("PvP: никто не выбрал подозреваемых — идёт обычная миссия")
+        if Match.Auto then Log("PvP: nobody plays a suspect, a plain co-op mission") else Say("PvP: никто не выбрал подозреваемых — идёт обычная миссия") end
         Match.Active, Match.Phase = false, "idle"
         return
     end
-    -- The AI squad is the host's: it spawns around the host and follows the host, so it only plays
-    -- for SWAT when the host does.
-    local host = UEHelpers.GetPlayerController()
-    local hostSuspect = false
-    for _, player in ipairs(players) do
-        if Match.Suspects[player.Name] and Valid(host) and player.Controller:GetAddress() == host:GetAddress() then hostSuspect = true end
-    end
-    Match.Bots = Settings.Bots and not hostSuspect
-    if Settings.Bots and hostSuspect then
-        Say("PvP: ИИ-отряд SWAT ходит за хостом, а хост играет за подозреваемых — боты выключены")
-    end
+    Match.Bots = Settings.Bots
     if suspectPlayers == 0 and Settings.Test then
         Say("PvP (тест): без подозреваемых")
     end
@@ -410,7 +418,8 @@ local function StartLive(now, players)
         Say("PvP: фильтр SWAT-действий не установлен — подозреваемые смогут связывать гражданских (см. лог HostBrain)")
     end
     Match.Phase, Match.StartedAt, Match.EndsAt = "live", now, now + Settings.Minutes * 60
-    Match.Deaths, Match.Warned, Match.Winner, Match.SquadSeen = {}, {}, nil, false
+    Match.Deaths, Match.Warned, Match.Winner = {}, {}, nil
+    H.Reset(now)
     for _, player in ipairs(players) do
         -- a suspect whose booking was lost (AI gone, ready state missed) takes over now
         if Match.Suspects[player.Name] and not Match.Converts[player.Name] and player.Team ~= TeamSuspect then
@@ -421,11 +430,126 @@ local function StartLive(now, players)
         Settings.Minutes, Settings.RespawnDelay, Match.Bots and "ИИ-отряд SWAT в игре." or "Без ИИ-отряда SWAT."))
 end
 
+---------------------------------------------------------------- the host's team button
+
+-- The pre-mission screen has a team button (W_PreMission_C.SwapTeams_Button) that a co-op mission keeps
+-- collapsed (its AllowTeamSwapping is false for CoopGS). On the host's own screen HostBrain shows it
+-- during a PvP briefing (SetVisibility replaces the binding) and makes it switch the host between SWAT
+-- and the suspects. The game's SwapTeams it runs as well only moves a player between the red and blue
+-- SWAT elements, which spawn alike. Clients keep the collapsed button and pick teams in chat.
+local PreMission = "/Game/Blueprints/Widgets/PreMission/W_PreMission.W_PreMission_C"
+local TeamButton = { Screen = nil, Widget = nil, Label = nil, Hooked = {} }
+
+local function HostPlayer(players)
+    local host = UEHelpers.GetPlayerController()
+    if not Valid(host) then return nil end
+    for _, player in ipairs(players) do
+        if player.Controller:GetAddress() == host:GetAddress() then return player end
+    end
+end
+
+local function PreMissionScreen()
+    for _, widget in ipairs(FindAllOf("W_PreMission_C") or {}) do
+        if widget:IsValid() and widget:IsInViewport() then return widget end
+    end
+end
+
+local function ShowTeamButton(host)
+    local screen = PreMissionScreen()
+    TeamButton.Screen = screen
+    if not screen or not host then return end
+    local address = screen:GetAddress()
+    if TeamButton.Widget ~= address then TeamButton.Widget, TeamButton.Label = address, nil end
+    pcall(function()
+        if screen.SwapTeams_Box:GetVisibility() ~= 0 then screen.SwapTeams_Box:SetVisibility(0) end -- Visible
+    end)
+    -- The button itself reads "Swap teams" (a separate label of the screen); its own text would lie on
+    -- top of that, so it stays empty, and the chosen side goes into the mode line at the top.
+    local label = Match.Teams[host.Name] == TeamSuspect and "PvP · вы за подозреваемых" or "PvP · вы за SWAT"
+    if TeamButton.Label ~= label then
+        local ok = pcall(function()
+            screen.SwapTeams_Button:SetButtonText(FText(""))
+            screen.ModeName_Text:SetText(FText(label))
+        end)
+        if ok then TeamButton.Label = label end
+    end
+end
+
+local function OnSwapTeams(context)
+    if not Match.Active or Match.Phase ~= "briefing" then return end
+    local ready = false
+    pcall(function() ready = context:get().bReady end)
+    if ready then return end
+    local host = HostPlayer(Players())
+    if not host then return end
+    local team = Match.Teams[host.Name] == TeamSuspect and TeamSwatBlue or TeamSuspect
+    Match.Teams[host.Name] = team
+    Say(string.format("%s → %s", host.Name, TeamName(team)))
+    -- the game relabels the button after SwapTeams; ours goes back on top
+    TeamButton.Label = nil
+    ExecuteInGameThreadWithDelay(100, function()
+        local ok, err = pcall(ShowTeamButton, host)
+        if not ok then Log("team button: %s", tostring(err)) end
+    end)
+end
+
+-- The host's own Ready button (or key) confirms the team choice and lets the mission start: a
+-- single-player mission readies the host by itself about 4 s into the pre-mission screen, and neither
+-- Server_SetReadyState(false) nor ToggleReady takes that back, so the start countdown is held instead
+-- (Pvp.FrameTick) until the host presses Ready.
+local function OnToggleReady()
+    if not Match.Active or Match.Phase ~= "briefing" or Match.HostConfirmed then return end
+    Match.HostConfirmed = true
+    local host = HostPlayer(Players())
+    Say(string.format("%s готов: %s", host and host.Name or "хост", TeamName(host and Match.Teams[host.Name] or TeamSwatBlue)))
+end
+
+-- The widget class loads with the first pre-mission screen (and may be loaded anew later), so the
+-- hooks follow the function objects.
+local function HookPreMission(name, callback)
+    local fn = StaticFindObject(PreMission .. ":" .. name)
+    if not Valid(fn) or TeamButton.Hooked[name] == fn:GetAddress() then return end
+    local ok, err = pcall(RegisterHook, PreMission .. ":" .. name, callback)
+    if ok then TeamButton.Hooked[name] = fn:GetAddress() else Log("cannot hook %s: %s", name, tostring(err)) end
+end
+
+-- While the host has not pressed Ready the start countdown stays full (every frame; the screen is
+-- looked up once a second by ShowTeamButton).
+local function HoldStart()
+    local screen = TeamButton.Screen
+    if Match.HostConfirmed or not Valid(screen) or not screen:IsInViewport() then return end
+    local gameState = UEHelpers.GetGameStateBase()
+    pcall(function()
+        if gameState.TimeTillGameStartCountdown < 10 then
+            gameState.TimeTillGameStartCountdown = 10
+            if not Match.HoldTold then
+                Match.HoldTold = true
+                Say("Старт ждёт хоста: выберите сторону кнопкой «Поменять команды» и нажмите «Готов»")
+            end
+        end
+    end)
+end
+
 local function BriefingTick(now, players)
-    SetSquadVariable(Settings.Bots and Match.Teams[HostName() or ""] ~= TeamSuspect)
-    if now - Match.LastRoster >= 20 then
-        Match.LastRoster = now
-        Say(Roster(players) .. ". Выбор команды в чате: !swat или !suspect")
+    -- the AI squad of a hosted mission only when somebody plays a suspect: a plain co-op mission stays as it is
+    local anySuspect = false
+    for _, player in ipairs(players) do
+        if Match.Teams[player.Name] == TeamSuspect then anySuspect = true end
+    end
+    SetSquadVariable(Settings.Bots and anySuspect)
+    local host = HostPlayer(players)
+    HookPreMission("SwapTeams", OnSwapTeams)
+    HookPreMission("ToggleReady", OnToggleReady)
+    ShowTeamButton(host)
+    if Match.LastRoster == -math.huge then
+        Say(string.format("PvP: SWAT против подозреваемых · %d мин · %s. Подозреваемые воюют вместе с ИИ-подозреваемыми и после смерти вселяются в них",
+            Settings.Minutes, Settings.Bots and "ИИ-отряд SWAT в игре" or "без ИИ-отряда SWAT"))
+    end
+    -- the roster goes out when it changes, and as a reminder once a minute
+    local roster = Roster(players)
+    if roster ~= Match.LastRosterText or now - Match.LastRoster >= 60 then
+        Match.LastRoster, Match.LastRosterText = now, roster
+        Say(roster .. ". Выбор стороны: у хоста кнопка «Поменять команды», у остальных — чат !swat или !suspect")
     end
     -- Once everyone is ready the suspects get their AI suspects booked and their spawn kit set (a
     -- player's own Ready overwrites ServerSavedLoadout, so the kit is put back while it is missing).
@@ -455,7 +579,9 @@ local function BriefingTick(now, players)
 end
 
 local function LiveTick(now, players)
-    if Match.Bots then KeepSquadOnSwat(players) end
+    local host = HostPlayer(players)
+    if host and Match.Suspects[host.Name] and host.Pawn then C.HideSquadHud() end
+    if Match.Bots then DirectSquad(now, players) end
     local swatPlayers, swatAlive, suspectAlive, waiting = 0, 0, 0, 0
     local aiLeft = #LivingAiSuspects()
     for _, player in ipairs(players) do
@@ -569,19 +695,34 @@ if not hooked then Log("cannot hook chat: %s", tostring(hookError)) end
 
 ---------------------------------------------------------------- interface for main.lua
 
+-- Settings.Auto: on the host's pre-mission screen of any co-op mission the mode arms itself, so the
+-- team choice needs no console. Nobody choosing the suspects leaves a plain co-op mission.
+local function AutoArm()
+    if not Settings.Auto or Match.AutoWorld == C.Worlds.Generation or (Deps.OtherModeActive and Deps.OtherModeActive()) then return end
+    local gameMode = UEHelpers.GetGameModeBase()
+    local coop = StaticFindObject("/Script/ReadyOrNot.CoopGM")
+    if not Valid(gameMode) or not Valid(coop) or not gameMode:IsA(coop) or not PreMissionScreen() then return end
+    Match.AutoWorld = C.Worlds.Generation
+    Match.Active, Match.Auto, Match.Phase, Match.World = true, true, "briefing", C.Worlds.Generation
+    Settings.Test = false
+    ResetMission()
+    Log("PvP armed on the pre-mission screen (auto)")
+end
+
 function Pvp.Tick()
+    if not Match.Active then AutoArm() end
     if not Match.Active then return end
     local now = C.WorldTime()
     if Match.Phase == "travel" then
         if C.Worlds.Generation == Match.TravelFrom then return end
-        Match.Phase, Match.World, Match.LastRoster = "briefing", C.Worlds.Generation, -math.huge
-        Match.Suspects, Match.Converts, Match.Stripped, Match.Removed = {}, {}, {}, {}
+        Match.Phase, Match.World = "briefing", C.Worlds.Generation
+        ResetMission()
     end
     if Match.World ~= C.Worlds.Generation then
         if Match.Phase == "briefing" then
             -- a travel can pass through a transition world first: follow it until the mission starts
-            Match.World, Match.LastRoster = C.Worlds.Generation, -math.huge
-            Match.Suspects, Match.Converts, Match.Stripped, Match.Removed = {}, {}, {}, {}
+            Match.World = C.Worlds.Generation
+            ResetMission()
         else
             Log("PvP: the mission was left; mode stopped")
             Match.Active, Match.Phase = false, "idle"
@@ -597,12 +738,28 @@ function Pvp.Tick()
     end
 end
 
+-- The mission start spawns the AI squad around the host's pawn, so with bots a suspect host stays at
+-- the van until the squad is there (at most 5 s).
+local function HostWaitsForSquad(player)
+    if not Settings.Bots or Match.SquadSeen then return false end
+    local host = UEHelpers.GetPlayerController()
+    if not Valid(host) or player.Controller:GetAddress() ~= host:GetAddress() then return false end
+    if #LivingSwat() > 0 then
+        Match.SquadSeen = true
+        return false
+    end
+    local now = C.WorldTime()
+    Match.HostWait = Match.HostWait or now
+    return now - Match.HostWait < 5
+end
+
 -- Every frame while a booking waits: the player's new pawn takes the AI's place in its first frame.
 function Pvp.FrameTick()
+    if Match.Active and Match.Phase == "briefing" then HoldStart() end
     if not Match.Active or next(Match.Converts) == nil then return end
     for _, player in ipairs(Players()) do
         local convert = Match.Converts[player.Name]
-        if convert and player.Pawn and not Match.Stripped[tostring(player.Pawn:GetAddress())] then
+        if convert and player.Pawn and not Match.Stripped[tostring(player.Pawn:GetAddress())] and not HostWaitsForSquad(player) then
             Convert(player, convert)
         end
     end
@@ -618,15 +775,17 @@ function Pvp.Stop()
 end
 
 function Pvp.Status(out)
+    out(string.format("PvP team choice on co-op pre-mission screens: %s, bots %s, %d min", Settings.Auto and "on" or "off",
+        Settings.Bots and "on" or "off", Settings.Minutes))
     if not Match.Active and Match.Phase == "idle" then return end
     local now = C.WorldTime()
-    out(string.format("PvP: phase %s, bots %s, %d min, takeover after %d s, AI suspects left %d%s",
-        Match.Phase, Settings.Bots and "on" or "off", Settings.Minutes, Settings.RespawnDelay, #LivingAiSuspects(),
+    out(string.format("PvP: phase %s%s, bots %s, %d min, takeover after %d s, AI suspects left %d%s",
+        Match.Phase, Match.Auto and " (auto)" or "", Settings.Bots and "on" or "off", Settings.Minutes, Settings.RespawnDelay, #LivingAiSuspects(),
         Match.Phase == "live" and string.format(", %s left", C.Clock(math.max(0, math.floor(Match.EndsAt - now)))) or ""))
     out(Roster(Players()))
 end
 
--- deps: EnsureGuards(), ResolveMap(name), StopOtherModes(), FilterInstalled() from main.lua.
+-- deps: EnsureGuards(), ResolveMap(name), StopOtherModes(), OtherModeActive(), FilterInstalled() from main.lua.
 function Pvp.RegisterCommands(Register, deps)
     Deps = deps
     local function ApplySettings(parts, first)
@@ -646,10 +805,10 @@ function Pvp.RegisterCommands(Register, deps)
         Settings.Test = false
         ApplySettings(parts, 2)
         C.TrackWorld()
-        Match.Active = true
+        Match.Active, Match.Auto = true, false
         if target == "here" then
-            Match.Phase, Match.World, Match.LastRoster = "briefing", C.Worlds.Generation, -math.huge
-            Match.Suspects, Match.Converts, Match.Stripped, Match.Removed = {}, {}, {}, {}
+            Match.Phase, Match.World = "briefing", C.Worlds.Generation
+            ResetMission()
             out(string.format("PvP on this mission: %s, %d min; players pick teams with !swat / !suspect before the start",
                 Settings.Bots and "with AI SWAT" or "no AI SWAT", Settings.Minutes))
             return
@@ -682,15 +841,28 @@ function Pvp.RegisterCommands(Register, deps)
     end)
     Register("comp_pvp_time", function(parts, out)
         local minutes, delay = tonumber(parts[1] or ""), tonumber(parts[2] or "")
-        if minutes and minutes >= 1 then Settings.Minutes = math.floor(minutes) end
+        if minutes and minutes >= 1 then
+            Settings.Minutes = math.floor(minutes)
+            C.SaveSetting("pvp_minutes", Settings.Minutes)
+        end
         if delay and delay >= 0 then Settings.RespawnDelay = math.floor(delay) end
         out(string.format("PvP: %d min, takeover %d s after a suspect's death", Settings.Minutes, Settings.RespawnDelay))
     end)
     Register("comp_pvp_bots", function(parts, out)
-        if parts[1] then Settings.Bots = parts[1] ~= "0" and parts[1]:lower() ~= "off" end
+        if parts[1] then
+            Settings.Bots = parts[1] ~= "0" and parts[1]:lower() ~= "off"
+            C.SaveSetting("pvp_bots", Settings.Bots and 1 or 0)
+        end
         local accuracy = tonumber(parts[2] or "")
         if accuracy and accuracy > 0 then Settings.BotAccuracy = accuracy end
         out(string.format("PvP AI SWAT squad: %s, aim penalty %.1f", Settings.Bots and "on" or "off", Settings.BotAccuracy))
+    end)
+    Register("comp_pvp_auto", function(parts, out)
+        if parts[1] then
+            Settings.Auto = parts[1] ~= "0" and parts[1]:lower() ~= "off"
+            C.SaveSetting("pvp_auto", Settings.Auto and 1 or 0)
+        end
+        out(string.format("PvP team choice on every co-op pre-mission screen: %s", Settings.Auto and "on" or "off"))
     end)
     Register("comp_pvp_status", function(_, out) Pvp.Status(out) end)
     Register("comp_pvp_end", function(_, out)

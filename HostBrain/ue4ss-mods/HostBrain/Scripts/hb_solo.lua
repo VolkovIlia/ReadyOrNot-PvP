@@ -4,6 +4,7 @@
 local UEHelpers = require("UEHelpers")
 local C = require("hb_common")
 local L = require("hb_loadout")
+local H = require("hb_hunt")
 
 local Log, Valid, HostPawn, Exec = C.Log, C.Valid, C.HostPawn, C.Exec
 local TeamSuspect, TeamSwatBlue, TeamSquad, CoopMode = C.TeamSuspect, C.TeamSwatBlue, C.TeamSquad, C.CoopMode
@@ -103,6 +104,7 @@ local function SuspectTick()
         return
     end
     if not SetHostSuspect() then return end
+    C.HideSquadHud()
     if Suspect.MovedInWorld ~= Worlds.Generation and MoveHostToSuspects() then
         Suspect.MovedInWorld = Worlds.Generation
         L.ApplySuspectOutfit(UEHelpers.GetPlayerController().PlayerState, UEHelpers.GetGameModeBase())
@@ -124,31 +126,15 @@ local Match = {
     Round = 0,
     Suspects = 0,
     Swat = 0,
-    Phase = "idle",  -- loading, prep, live, ended, over (match decided), done (final screen shown)
+    Phase = "idle",  -- loading, prep, live, ended, over (match decided), result (shown, a new match follows)
     PhaseEnds = 0,   -- world time
     World = nil,     -- world generation of the running round
     LoadedFrom = nil,
-    Final = false,   -- the reload after the deciding round only shows the result
+    Final = false,   -- the reload after the deciding round shows the result first
     Winner = nil,
     LastResult = nil,
     ReadyAsked = 0,
     Warned = {},
-}
-
--- The squad learns where the host is only the way it would in a mission: an AI SWAT sees the host or
--- hears the host's shots. Without contact it clears the building room by room; a long stalemate gives it a
--- rough area around the host (Hunt.Hints).
-local Hunt = {
-    HearRange = 4000,  -- cm: AI SWAT closer than this to a shot learn where it came from
-    Hints = true,
-    HintAfter = 60,    -- seconds without contact before a hint
-    HintSpread = 1500, -- cm: random offset of a hint from the host
-    Contact = nil,     -- { Location, Time, Source } of the latest sighting, gunshot or hint
-    Ordered = nil,     -- the contact the squad was last sent to
-    LastOrder = 0,
-    LastHint = 0,
-    Searching = false,
-    Shot = nil,        -- location of a host gunshot not yet processed
 }
 
 local function BotsMayFire()
@@ -166,101 +152,6 @@ local function DirectSwatFire()
                 ai.CombatActivity:ScriptedFireAtActor(pawn, Bots.Burst, true, Bots.Accuracy, false)
             end
         end)
-    end
-end
-
--- Weapons fire through the Server_OnFire / Multicast_OnFire RPCs; only the host's shots are noted.
-local function OnWeaponFire(context)
-    if Match.Phase ~= "live" then return end
-    local pawn = HostPawn()
-    local ok, owner = pcall(function() return context:get():GetOwner() end)
-    if ok and Valid(owner) and Valid(pawn) and owner:GetAddress() == pawn:GetAddress() then
-        Hunt.Shot = Location(pawn)
-    end
-end
-
-for _, rpc in ipairs({ "Server_OnFire", "Multicast_OnFire" }) do
-    local ok, err = pcall(RegisterHook, "/Script/ReadyOrNot.BaseMagazineWeapon:" .. rpc, OnWeaponFire)
-    if not ok then Log("cannot hook %s: %s", rpc, tostring(err)) end
-end
-
-local function SquadManager()
-    local manager = FindFirstOf("SWATManager")
-    return Valid(manager) and manager or nil
-end
-
--- Orders go to the squad leader's team. The host leads it in a co-op mission (the squad follows the host),
--- so a living AI SWAT takes the lead.
-local function TakeSquadLead(manager, swat)
-    local leader = manager.SquadLeader
-    local pawn = HostPawn()
-    if IsDown(leader) or (Valid(pawn) and leader:GetAddress() == pawn:GetAddress()) then
-        manager.SquadLeader = swat[1]
-    end
-end
-
-local function Order(manager, command, location)
-    local ok, err = pcall(function()
-        if command == "move" then
-            manager:GiveMoveCommand(TeamSquad, location)
-        else
-            manager:GiveSearchAndSecureCommand(TeamSquad, location, false)
-        end
-    end)
-    if not ok then Log("squad order %s failed: %s", command, tostring(err)) end
-end
-
-local function ResetHunt(now)
-    Hunt.Contact, Hunt.Ordered, Hunt.Shot = nil, nil, nil
-    Hunt.LastOrder, Hunt.LastHint, Hunt.Searching = now, now, false
-end
-
-local function DirectSquad(now, pawn, swat)
-    local manager = SquadManager()
-    if not manager then return end
-    TakeSquadLead(manager, swat)
-    local here = Location(pawn)
-    local seen = false
-    for _, character in ipairs(swat) do
-        pcall(function()
-            if character.Controller.TargetingComponent:CanCharacterBeSeen(pawn) then seen = true end
-        end)
-    end
-    if seen then
-        Hunt.Contact = { Location = here, Time = now, Source = "sighting" }
-    elseif Hunt.Shot then
-        for _, character in ipairs(swat) do
-            if Distance(Location(character), Hunt.Shot) <= Hunt.HearRange then
-                Hunt.Contact = { Location = Hunt.Shot, Time = now, Source = "gunshot" }
-                break
-            end
-        end
-    end
-    Hunt.Shot = nil
-    local lastNews = math.max(Hunt.Contact and Hunt.Contact.Time or 0, Hunt.LastHint)
-    if Hunt.Hints and now - lastNews >= Hunt.HintAfter then
-        local angle, offset = math.random() * 2 * math.pi, math.random() * Hunt.HintSpread
-        Hunt.Contact = {
-            Location = { X = here.X + math.cos(angle) * offset, Y = here.Y + math.sin(angle) * offset, Z = here.Z },
-            Time = now,
-            Source = "hint",
-        }
-        Hunt.LastHint = now
-    end
-    if seen then return end -- in contact: the fire director handles it
-    if Hunt.Contact and Hunt.Contact ~= Hunt.Ordered then
-        Order(manager, "move", Hunt.Contact.Location)
-        Log("squad: moving to the last %s, %.0f m from you", Hunt.Contact.Source, Distance(Hunt.Contact.Location, here) / 100)
-        Hunt.Ordered, Hunt.LastOrder, Hunt.Searching = Hunt.Contact, now, false
-    elseif not Hunt.Searching then
-        -- At the last contact (or without one): clear the rooms from there.
-        local target = Hunt.Ordered and Hunt.Ordered.Location
-        local from = Location(manager.SquadLeader)
-        if not target or Distance(from, target) < 600 or now - Hunt.LastOrder >= 45 then
-            Order(manager, "search", target or from)
-            Log("squad: search and secure from %s", target and "the last contact" or "its position")
-            Hunt.Searching, Hunt.LastOrder = true, now
-        end
     end
 end
 
@@ -305,8 +196,8 @@ local function BeginRound(now, pawn)
         Match.Active, Match.Phase = false, "idle"
         return
     end
-    local manager = SquadManager()
-    if manager then TakeSquadLead(manager, swat) end
+    local manager = H.SquadManager()
+    if manager then H.Lead(manager, swat, { pawn }) end
     local weapons = EquipSuspectLoadout(pawn)
     Match.World = Worlds.Generation
     Match.Phase, Match.PhaseEnds = "prep", now + Match.PrepTime
@@ -317,7 +208,7 @@ end
 
 local function GoLive(now)
     Match.Phase, Match.PhaseEnds, Match.Warned = "live", now + Match.RoundTime, {}
-    ResetHunt(now)
+    H.Reset(now)
     Banner(string.format("SWAT пошёл на штурм! Продержитесь %s или уничтожьте отряд", Clock(Match.RoundTime)))
 end
 
@@ -336,14 +227,16 @@ local function EndRound(now, suspectsWon, reason)
     Match.PhaseEnds = now + 7
 end
 
--- The deciding round may end on the death screen, so the result is shown again in a calm reload of
--- the mission: the host stays a suspect and the AI SWAT no longer fire.
-local function FinishMatch()
-    Match.Active, Match.Phase = false, "done"
-    local manager, swat = SquadManager(), LivingSwat()
-    if manager and #swat > 0 then TakeSquadLead(manager, swat) end -- the squad stops following the host
+-- The deciding round may end on the death screen, so the result is shown again in the reloaded
+-- mission, and a new match starts there after a short pause (comp_suspect off leaves).
+local function FinishMatch(now)
+    local manager, swat = H.SquadManager(), LivingSwat()
+    if manager then H.Lead(manager, swat, { HostPawn() }) end -- the squad stops following the host
     Banner(string.format("Матч окончен: победили %s. %s", Match.Winner, ScoreLine()))
-    Toast("Новый матч: comp_play_suspect " .. Match.Level)
+    Toast(string.format("Новый матч до %d побед через 8 с. Выйти из режима: comp_suspect off", Match.RoundsToWin))
+    Match.Round, Match.Suspects, Match.Swat, Match.Final = 1, 0, 0, false
+    Match.Winner, Match.LastResult = nil, nil
+    Match.World, Match.Phase, Match.PhaseEnds = Worlds.Generation, "result", now + 8
 end
 
 local function RoundTick()
@@ -354,7 +247,7 @@ local function RoundTick()
         if Worlds.Generation == Match.LoadedFrom then return end -- the old mission is still up
         SkipPreMission(now)
         if Suspect.MovedInWorld ~= Worlds.Generation or IsDown(pawn) then return end
-        if Match.Final then FinishMatch() else BeginRound(now, pawn) end
+        if Match.Final then FinishMatch(now) else BeginRound(now, pawn) end
         return
     end
     if Worlds.Generation ~= Match.World then
@@ -362,7 +255,9 @@ local function RoundTick()
         Match.Active, Match.Phase = false, "idle"
         return
     end
-    if Match.Phase == "prep" or Match.Phase == "live" then
+    if Match.Phase == "result" then
+        if now >= Match.PhaseEnds and not IsDown(pawn) then BeginRound(now, pawn) end
+    elseif Match.Phase == "prep" or Match.Phase == "live" then
         -- No pawn at all is a controller between pawns; a death leaves a DeadSpectator_C pawn.
         if not pawn then return end
         local swat = LivingSwat()
@@ -376,7 +271,7 @@ local function RoundTick()
         elseif now >= Match.PhaseEnds then
             EndRound(now, true, "время штурма вышло")
         else
-            DirectSquad(now, pawn, swat)
+            H.Direct(now, { pawn }, swat)
             local left = Match.PhaseEnds - now
             for _, mark in ipairs({ 60, 30 }) do
                 if left <= mark and not Match.Warned[mark] then
@@ -432,9 +327,9 @@ function Solo.RegisterCommands(Register, deps)
         out(string.format("round: %ds of assault after %ds of preparation (from the next round)", Match.RoundTime, Match.PrepTime))
     end)
     Register("comp_bot_hints", function(parts, out)
-        if parts[1] then Hunt.Hints = parts[1] ~= "0" end
+        if parts[1] then H.Settings.Hints = parts[1] ~= "0" end
         out(string.format("AI SWAT hints: %s (after %ds without contact the squad gets an area within %dm of you)",
-            Hunt.Hints and "on" or "off", Hunt.HintAfter, Hunt.HintSpread // 100))
+            H.Settings.Hints and "on" or "off", H.Settings.HintAfter, H.Settings.HintSpread // 100))
     end)
     Register("comp_unstuck", function(_, out)
         local pawn = HostPawn()
@@ -458,8 +353,12 @@ function Solo.Status(out)
     if Match.Active or Match.Phase ~= "idle" then
         out(string.format("suspect match on %s: round %d, phase %s, suspects %d : %d SWAT (first to %d), round time %ds, prep %ds, hints %s",
             tostring(Match.Level), Match.Round, Match.Phase, Match.Suspects, Match.Swat, Match.RoundsToWin,
-            Match.RoundTime, Match.PrepTime, Hunt.Hints and "on" or "off"))
+            Match.RoundTime, Match.PrepTime, H.Settings.Hints and "on" or "off"))
     end
+end
+
+function Solo.Active()
+    return Suspect.Active or Match.Active
 end
 
 -- Leaves the solo mode altogether (another mode starts).

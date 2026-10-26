@@ -41,6 +41,34 @@ local function ReadFile(path)
     return text
 end
 
+-- Host settings that outlive the game session: key=value lines in <mod>/settings.txt.
+local SettingsPath = (debug.getinfo(1, "S").source:gsub("^@", ""):gsub("[\\/]Scripts[\\/]hb_common%.lua$", "")) .. "\\settings.txt"
+
+local function LoadSettings()
+    local values = {}
+    for line in ((ReadFile(SettingsPath) or "") .. "\n"):gmatch("([^\n]*)\n") do
+        local key, value = line:match("^%s*([%w_]+)%s*=%s*(.-)%s*$")
+        if key then values[key] = value end
+    end
+    return values
+end
+
+local function SaveSetting(key, value)
+    local values = LoadSettings()
+    values[key] = tostring(value)
+    local keys = {}
+    for k in pairs(values) do keys[#keys + 1] = k end
+    table.sort(keys)
+    local file = io.open(SettingsPath, "w")
+    if not file then
+        Log("cannot write %s", SettingsPath)
+        return false
+    end
+    for _, k in ipairs(keys) do file:write(k .. "=" .. values[k] .. "\n") end
+    file:close()
+    return true
+end
+
 ---------------------------------------------------------------- teams and worlds
 
 -- ETeamType values; SWATManager orders addressed to TT_SQUAD go to the whole AI squad.
@@ -183,6 +211,22 @@ local function Toast(text)
     if hud then pcall(function() hud:AddToast(text) end) end
 end
 
+-- The squad's status panel and the command prompt tell a suspect where the enemy squad is and what it
+-- does; on a suspect host's HUD they are collapsed (SetVisibility replaces their bindings until the HUD
+-- is built again with the next pawn or mission).
+local SquadHudParts = { "SWATTeamStatus_V2", "SWATTeamStatus_V2_Gamepad", "CommandContext_Container", "CommandContext_Container_Gamepad" }
+
+local function HideSquadHud()
+    local hud = Hud()
+    if not hud then return end
+    for _, name in ipairs(SquadHudParts) do
+        pcall(function()
+            local part = hud[name]
+            if Valid(part) and part:GetVisibility() ~= 1 then part:SetVisibility(1) end -- Collapsed
+        end)
+    end
+end
+
 local function Clock(seconds)
     return string.format("%d:%02d", seconds // 60, seconds % 60)
 end
@@ -192,6 +236,7 @@ C.TeamSwatRed, C.TeamSwatBlue, C.TeamSuspect, C.TeamSquad, C.CoopMode = TeamSwat
 C.Worlds, C.TrackWorld, C.WorldTime = Worlds, TrackWorld, WorldTime
 C.DownReason, C.IsDown, C.Location, C.Distance, C.LivingSwat = DownReason, IsDown, Location, Distance, LivingSwat
 C.TraceBlocked, C.PlaceNextToSuspect = TraceBlocked, PlaceNextToSuspect
-C.Hud, C.Banner, C.Toast, C.Clock = Hud, Banner, Toast, Clock
+C.Hud, C.Banner, C.Toast, C.Clock, C.HideSquadHud = Hud, Banner, Toast, Clock, HideSquadHud
+C.LoadSettings, C.SaveSetting = LoadSettings, SaveSetting
 
 return C
