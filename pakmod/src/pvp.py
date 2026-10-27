@@ -9,10 +9,9 @@
 # Differences from the UE4SS version, which patched the game's code natively:
 #   * the hidden co-op PvP flag (CoopGS.bCrouchingTigerHiddenDragon) stays off: without the native team
 #     rules patch it makes every AI shoot the civilians. Enemies follow the normal rules (SWAT against
-#     team 3), dead players may spectate anyone;
+#     team 3); team cameras and spectating keep to one's own side only on machines with the pak;
 #   * suspect players' SWAT actions (arrest, yell, TOC reports) are not filtered: suspects carry no zip
-#     cuffs, the rest is up to the players;
-#   * mission score popups still show.
+#     cuffs, and the mission scores are set to 0 (no popups, reports give nothing).
 
 SWAT = 2
 SUSPECT = 3
@@ -229,6 +228,9 @@ class PvPDirector(Actor):
     Banners: List[str]
     BannerAfter: float
     OwnPopups: List[str]
+    # scoring entries set to 0 in this world (MuteScores); a spectator with nobody of its side to watch was logged
+    ScoresMuted: int
+    ViewsTold: bool
     # squad hunt
     HuntTargets: List[Actor]
     HuntContact: Vector
@@ -564,10 +566,58 @@ class PvPDirector(Actor):
         popup: Text = Text(line)
         hud.AddObjectivePopup(popup)
 
+    def MuteScores(self):
+        """No mission score for anybody, so no score or objective popups on any player's HUD, a client without the
+        pak too. The game shows them through ScoringManager.Multicast_DisplayScore, which only GiveScore,
+        GivePenalty, GiveAllScores, TakeScore and DisplayBonuses call: the first two and TakeScore skip a score of 0
+        and the others show nothing for a sum of 0. The manager keeps its own copy of every scoring component's
+        bonuses and penalties in ObjectiveScoreGroups (what they look up), so each one there is set to 0, and the
+        scores that show up later (a dropped gun) a second after they do. They stay enabled: with no enabled
+        score left to give the game counts the mission as cleared, and a cleared mission stands its AI squad down.
+        Reports to TOC then give nothing either."""
+        manager = cast(GetActorOfClass(ScoringManager), ScoringManager)
+        if not manager:
+            return
+        before = self.ScoresMuted
+        groups = manager.ObjectiveScoreGroups
+        for g in range(len(groups)):
+            group = groups[g]
+            group.Scores = self.MutedScores(group.Scores)
+            group.InactiveScores = self.MutedScores(group.InactiveScores)
+            groups[g] = group
+        if self.ScoresMuted != before:
+            manager.ObjectiveScoreGroups = groups
+            self.Log(f"mission scores set to 0: {self.ScoresMuted}")
+
+    def MutedScores(self, scores: List[ScoreData]) -> List[ScoreData]:
+        for i in range(len(scores)):
+            data = scores[i]
+            changed = False
+            bonuses = data.Bonuses
+            for b in range(len(bonuses)):
+                bonus = bonuses[b]
+                if bonus.Score != 0:
+                    bonus.Score = 0
+                    bonuses[b] = bonus
+                    changed = True
+            penalties = data.Penalties
+            for p in range(len(penalties)):
+                penalty = penalties[p]
+                if penalty.Score != 0:
+                    penalty.Score = 0
+                    penalties[p] = penalty
+                    changed = True
+            if changed:
+                data.Bonuses = bonuses
+                data.Penalties = penalties
+                scores[i] = data
+                self.ScoresMuted += 1
+        return scores
+
     def HideSwatPopups(self, pc: ReadyOrNotPlayerController):
-        """A suspect gets no SWAT mission score or objective popups: a co-op mission gives them to every player, and
-        only the game's hidden PvP flag (kept off by the mode) would stop it. They are collapsed as soon as they
-        show; the mode's own popups stay. Local to the player's machine: a client needs the pak for this."""
+        """A suspect gets no SWAT popups: the host sets the mission scores to 0 (MuteScores), and the custom
+        penalties the game still gives (no scoring component behind them) are collapsed as soon as they show;
+        the mode's own popups stay. Local to the player's machine."""
         state = cast(pc.PlayerState, ReadyOrNotPlayerState)
         if not state or state.Team != SUSPECT:
             return
@@ -2189,6 +2239,8 @@ class PvPDirector(Actor):
             return
         players = self.Players()
         self.PublishStats(players)
+        if st.Phase == "live" or st.Phase == "roundover":
+            self.MuteScores()
         if st.Phase == "briefing":
             self.BriefingTick(now, players)
         elif st.Phase == "live":
@@ -2961,7 +3013,7 @@ class PvPDirector(Actor):
             return
         if self.Server:
             self.ShowBanners()
-        self.BlockSwatCameras(pc)
+        self.BlockEnemyViews(pc)
         self.HideSwatPopups(pc)
         want = self.BoardForced
         if not want and pc.IsInputKeyDown(Key(KeyName="Tab")):
@@ -2982,18 +3034,54 @@ class PvPDirector(Actor):
             self.BoardShown = False
             self.Board.SetVisibility(COLLAPSED)
 
-    def BlockSwatCameras(self, pc: ReadyOrNotPlayerController):
-        """A suspect may not look through a SWAT officer's helmet camera: the game's team view lists every SWAT
-        officer unless its hidden co-op PvP flag is on (the mode keeps it off: without the native patch it turns
-        the AI against civilians), so a SWAT view a suspect opens is closed again. The view is local to the player's
-        machine: a client needs the pak for this."""
-        pawn = cast(pc.K2_GetPawn(), PlayerCharacter)
-        if not pawn or pawn.DefaultTeam != SUSPECT:
+    def BlockEnemyViews(self, pc: ReadyOrNotPlayerController):
+        """Nobody looks at the other side through the game's own cameras: a living player's team view (helmet
+        cameras) and a dead player's spectator view. Without its hidden co-op PvP flag (kept off by the mode: it
+        turns the AI against civilians) the game offers every player character in both, so a view of the other
+        side is closed (team view) or moved on to the player's own side (spectating). Both views are local to the
+        player's machine: this needs the pak on it."""
+        state = cast(pc.PlayerState, ReadyOrNotPlayerState)
+        if not state or not self.InMatch():
             return
-        view = pawn.CurrentViewCharacter
-        if view and view != pawn and self.SideOf(view) == SWAT:
-            pawn.ClosePlayerView()
-            self.Log("closed a SWAT camera view")
+        side = SUSPECT if state.Team == SUSPECT else SWAT
+        pawn = pc.K2_GetPawn()
+        player = cast(pawn, PlayerCharacter)
+        if player:
+            view = player.CurrentViewCharacter
+            if view and view != player and self.SideOf(view) != side:
+                player.ClosePlayerView()
+                self.Log("closed a team camera of the other side")
+            return
+        spectator = cast(pawn, SpectatePawn)
+        if not spectator:
+            return
+        target = cast(spectator.CurrentViewTarget, ReadyOrNotCharacter)
+        if not target or self.SideOf(target) == side:
+            return
+        # the next one of the player's own side, in the game's own order
+        for i in range(12):
+            spectator.SpectateNextPlayer()
+            target = cast(spectator.CurrentViewTarget, ReadyOrNotCharacter)
+            if not target or self.SideOf(target) == side:
+                return
+        friend = self.Teammate(side)
+        if friend:
+            spectator.SetViewTarget(friend)
+        elif not self.ViewsTold:
+            self.ViewsTold = True
+            self.Log("spectating: nobody of the player's own side to watch")
+
+    def Teammate(self, side: int) -> ReadyOrNotCharacter:
+        """A living character of the side for a dead player to watch: a player first, an AI one otherwise."""
+        ai: ReadyOrNotCharacter = None
+        for actor in GetAllActorsOfClass(ReadyOrNotCharacter):
+            character = cast(actor, ReadyOrNotCharacter)
+            if character and not self.IsDown(character) and self.SideOf(character) == side:
+                if isinstance(character, PlayerCharacter):
+                    return character
+                if not ai:
+                    ai = character
+        return ai
 
     def InMatch(self) -> bool:
         """A PvP round is on: the host knows it; a client sees the round time the host publishes or a player

@@ -38,10 +38,12 @@ Turns any Ready or Not co-op mission into PvP: SWAT players against suspect play
 - Scoreboard on Tab in the game's own style: round, score, time left, every player's kills, deaths, status and
   ping, the AI officers and the AI suspects left.
 - Match stats: a kill feed in chat, kills and deaths on the result pages, the best player.
-- Suspect players spawn in an AI suspect's place with suspect guns and clothes, no armour or SWAT gear,
-  and after a death take over another living AI suspect (3 s of spawn protection).
+- Suspect players spawn in an AI suspect's place with suspect clothes and no SWAT gear, and after a death take
+  over another living AI suspect (3 s of spawn protection).
 - Two rule sets in the host's menu: vanilla (the AI keep the guns and armour the mission gives them, a suspect
-  player gets the AI's own guns) or balanced (rifles for suspect players, Kevlar for the AI SWAT squad).
+  player gets the AI's own guns, ammo and armour) or balanced (rifles for suspect players, Kevlar for the AI SWAT
+  squad).
+- No mission score: nobody gets score or objective popups. Helmet cameras and spectating keep to one's own side.
 - Suspects open any door, locked ones too; SWAT still find locked doors locked.
 - Suspects pick up dropped guns: hold the evidence-collect key on a gun.
 - Up to five AI SWAT bots fill the free SWAT slots: they fight for SWAT and hunt suspects on their own when no
@@ -56,9 +58,9 @@ HOW TO PLAY
 3. In a round hold Tab for the scoreboard.
 
 KNOWN LIMITS
-- Suspect players can still use SWAT radio reports and yells, and dead players may spectate anyone: blocking
-  those needs native code, which a Mods-menu mod cannot load.
-- A friend gets the Tab scoreboard, and as a suspect no SWAT helmet cameras or score popups, only with the mod
+- Suspect players can still yell "get down" and report to TOC: filtering that needs native code, which a
+  Mods-menu mod cannot load. A report gives no score.
+- A friend gets the Tab scoreboard, and helmet cameras and spectating limited to their own side, only with the mod
   subscribed.
 - With no SWAT player the bots close in by unseen hops from doorway to doorway (the game's AI does not take a
   bot-led squad far).

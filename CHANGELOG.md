@@ -24,10 +24,15 @@
   - «ЯЗЫК / LANGUAGE» in the menu switches it;
   - a client's scoreboard follows the client's own game language.
 - **Spawn protection.** A suspect player who takes over an AI suspect cannot be hurt for 3 s.
-- **No SWAT helmet cameras for suspects.** The game's team view lists every SWAT officer while its hidden PvP flag
-  is off, so a suspect could watch where SWAT were; the mode closes such a view at once (a client needs the pak).
-- **No SWAT score or objective popups for suspects** ("Reported suspect", "+10", mission objectives): they are hidden
-  as soon as they show; the mode's own popups stay (a client needs the pak).
+- **No mission score, so no score or objective popups for anybody**, a client without the mod too: the host sets
+  every mission score to 0 ("Reported suspect +10", objectives done). Reports to TOC give nothing either. Switching
+  the scores off instead would count the mission as cleared, and the game stands a cleared mission's AI squad down.
+- **Helmet cameras and spectating keep to one's own side.** Without its hidden PvP flag the game offers every player
+  in both views:
+  - a team camera of the other side is closed at once, for SWAT players too;
+  - a dead player looking at the other side moves on to the next character of their own side.
+
+  Both views are drawn on the player's own machine, so this needs the mod there.
 - **SWAT bots hunt again.** With no SWAT player the squad is led by a bot, and the game's AI then carries out only
   orders of a few metres, so the bots stood at their start. Now, while no suspect player can see the squad and it
   is not fighting, it hops every 12 s to a doorway up to 16 m closer to the last sighting, gunshot or hint (never

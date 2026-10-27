@@ -123,3 +123,7 @@ items marked "with the pak" do not apply).
 6. **Spawn protection:** the friend, just after a takeover, cannot be hurt for about 3 s.
 7. **Bot slots:** with the host on the suspects' side and the friend on SWAT, the SWAT card shows the friend and four
    bot slots; removing two leaves the friend with two bots in the round.
+8. **No score popups for anybody** (without the pak too): reports, arrests and kills give the friend and the host no
+   "+N" or objective popup.
+9. **Views keep to one's own side** (with the pak): the friend as SWAT cannot open the host's helmet camera while the
+   host plays a suspect; killed, the friend's spectator view does not stay on the host.

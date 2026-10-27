@@ -809,6 +809,81 @@ with a floor, in sight of the doorway and hidden, all of them or none. Then a sh
 hop gets closer). Checked on Penthouse: the squad closed in from 25 m to the host in one hop of 5 officers, fought
 the AI suspects and the host.
 
+## Mission score, yells, TOC reports and views of the other side (28.10.2026)
+
+Question: what a Mods-menu mod can do about suspect players yelling and reporting to TOC, dead players spectating
+the other side, and score popups and helmet cameras on clients without the mod. Decompiled with
+`tools/ghidra_decompile.ps1`; checked on Penthouse (host as a suspect, five AI officers).
+
+Observation:
+- **Original exec thunks.** HostBrain had replaced the `Func` of server RPCs when the JMAP dump was taken (pointers
+  into its DLL). The originals are in the game's `FNameNativePtrPair` tables in `.rdata` (`{const char* name,
+  FNativeFuncPtr}` pairs sorted by name per class): the table holding a known exec pointer of the same class gives
+  its neighbours. `ReadyOrNotCharacter`: `Server_Yell` `0x1448d8880`, `Server_ReportTarget` `0x1448d8320`,
+  `Server_ReportToTOC` `0x1448d83e0`, `OnYellExecute` `0x1448d6240`. The `_Implementation`s are `PlayerCharacter`
+  vtable slots `+0xa00` (yell, `0x144e8d350`), `+0xdc8` (report target, `0x144e8c490`), `+0xdd8` (report to TOC,
+  `0x144e8c8b0`).
+- **Score popups** come only from `ScoringManager` (`FUN_144d91210` → `Multicast_DisplayScore`), called by:
+  - `GiveScore` (`0x144da06d0`): the bonus is enabled, not given and its `Score` is not 0; the popup only once
+    (`bWasDisplayedOnHUD`);
+  - `GivePenalty` (`0x144da03a0`): the same for a penalty;
+  - `GiveAllScores` (`0x144da0000`): every bonus not given yet (enabled ones only if asked), one popup with the sum
+    unless it is 0. `Objective::ObjectiveCompleted` calls it for the objective's scoring component with "enabled
+    only" and a popup unless `bHiddenObjective`: the objective popups ("ObjectiveCompleteWithName") are score popups
+    too;
+  - `TakeScore` (`0x144db3b10`): a given bonus with a non-zero score;
+  - `DisplayBonuses` (`0x144d90ac0`): given bonuses not shown yet.
+
+  The bonus is looked up in the manager's own copy: `ObjectiveScoreGroups[].Scores[]` (`FScoreData`, matched by
+  `FromScoringComponent`) `.Bonuses[]` / `.Penalties[]`, not in the component.
+- **Switching the bonuses off counts the mission as cleared.** With every bonus and penalty disabled
+  (`bEnabled = false`), `ScoringManager.bCachedHasClearedMission` and `bCachedSoftClearedMission` turned true at
+  once. `SWATManager.SwatAI` emptied while the five officers stood alive at their spots, and the round ended as "the
+  AI squad is down". `AllRequiredScoresGiven` itself (`0x144d8b1d0`) counts a disabled required bonus as not given.
+- **`Score = 0` works:** with every bonus and penalty set to 0:
+  - the mission is not cleared and the squad keeps hunting;
+  - `GiveScore` shows nothing;
+  - the same bonus set back to 10 shows its popup (a new `W_ScoreNotify_C`).
+- **Yell.** `Server_Yell_Implementation` checks only that the yeller is alive and not arrested. It picks the voice
+  line by who is in sight, plays it and sets a timer to `OnYellExecute` (`0x144e81ec0`). That one reports an AI
+  hearing noise (`UAISense_Hearing::ReportNoiseEvent`, `FUN_14475ed90`: loudness 1, the yeller as instigator, tag
+  `SWATYellForCompliance`) and may make a civilian in sight answer.
+  - There is no team check and no reflected property on the way.
+  - `CanYell` runs on the yeller's machine only; its cooldown at `+0x1638` is not reflected.
+  - A failing `_Validate` would disconnect the player.
+- **Report.** `Server_ReportTarget_Implementation` hands the report to a Blueprint event unless
+  `ReadyOrNotGameState.bPvPMode` (`+0x840`) is set; in that mode it marks enemy players for the team instead.
+  `bPvPMode` and `bCanReportToTOC` (`+0x841`) are class defaults (`CPF_Edit`, not replicated), and no loaded
+  Blueprint reads `bCanReportToTOC`.
+- **Team view** (`GetAvaliablePlayersForTeamView`, `0x144b49c00`) is built on the viewer's machine:
+  - with the hidden PvP flag: the pawns in `PlayerArray` on the viewer's team;
+  - else with `GameState.bPvPMode`: `RedTeamPlayers` (teams 1, 3) or `BlueTeamPlayers` (2, 4);
+  - else every `PlayerCharacter` and the AI squad; dead ones are dropped unless `bIncludeDeadViews`.
+- **Spectating** (`SpectatePawn::SpectateNextPlayer` → `0x144b85dd0`): without the flag the candidates are:
+  - every living `PlayerCharacter`;
+  - the AI characters on the team of the player's previous pawn (`PlayerState+0x318`).
+
+  So a dead suspect gets the SWAT players and the AI suspects, a dead SWAT player the suspect players and the AI
+  squad. `SpectatePawn.CurrentViewTarget` is not replicated; `SetViewTarget` and `SpectateNextPlayer` run locally.
+  The dead player's pawn is `DeadSpectator_C`.
+- The hidden flag's `IsEnemyTeam` is `A != B` for every pair, TT_NONE included: no team value keeps civilians
+  neutral with it.
+
+Result (0.4.0-alpha):
+- `PvPDirector.MuteScores` (host, every second of a round) sets every bonus and penalty in `ObjectiveScoreGroups`
+  (and `InactiveScores`) to 0. Nobody gets score or objective popups, a client without the mod too, and reports to
+  TOC give nothing. Checked: 27–29 scoring entries per Penthouse round, no popup from `GiveScore`, the squad hunts,
+  the mission is not cleared.
+- `PvPDirector.BlockEnemyViews` (every machine with the pak, every 0.1 s):
+  - a team view of the other side is closed;
+  - a spectator looking at the other side is moved on with `SpectateNextPlayer` to the next character of the
+    player's own side (or one is picked).
+
+  Checked: a dead suspect host's spectator pointed at an AI officer was on an AI suspect 0.5 s later.
+- Yells and reports cannot be filtered from Blueprint; views on a client without the pak stay open.
+- Testing note: teleporting AI characters next to the player from UE4SS Lua and then calling `OnYellExecute` or
+  `Server_Yell` crashed UE4SS three times (access violation in `UE4SS.dll+0x2aee57`).
+
 ## Lobby limit: 5 → 10 (26.10.2026)
 
 Observation (decompilation, checking the value in game):
