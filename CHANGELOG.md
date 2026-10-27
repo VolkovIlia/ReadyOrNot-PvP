@@ -24,6 +24,8 @@
   - «ЯЗЫК / LANGUAGE» in the menu switches it;
   - a client's scoreboard follows the client's own game language.
 - **Spawn protection.** A suspect player who takes over an AI suspect cannot be hurt for 3 s.
+- **No SWAT helmet cameras for suspects.** The game's team view lists every SWAT officer while its hidden PvP flag
+  is off, so a suspect could watch where SWAT were; the mode closes such a view at once (a client needs the pak).
 - **A native look:**
   - round events show for the host as the game's own objective popups at the bottom centre: round start, result,
     side swap, time warnings, takeover, pickup;

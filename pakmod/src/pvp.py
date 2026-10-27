@@ -2496,6 +2496,7 @@ class PvPDirector(Actor):
             return
         if self.Server:
             self.ShowBanners()
+        self.BlockSwatCameras(pc)
         want = self.BoardForced
         if not want and pc.IsInputKeyDown(Key(KeyName="Tab")):
             want = self.InMatch()
@@ -2514,6 +2515,19 @@ class PvPDirector(Actor):
         elif self.BoardShown:
             self.BoardShown = False
             self.Board.SetVisibility(COLLAPSED)
+
+    def BlockSwatCameras(self, pc: ReadyOrNotPlayerController):
+        """A suspect may not look through a SWAT officer's helmet camera: the game's team view lists every SWAT
+        officer unless its hidden co-op PvP flag is on (the mode keeps it off: without the native patch it turns
+        the AI against civilians), so a SWAT view a suspect opens is closed again. The view is local to the player's
+        machine: a client needs the pak for this."""
+        pawn = cast(pc.K2_GetPawn(), PlayerCharacter)
+        if not pawn or pawn.DefaultTeam != SUSPECT:
+            return
+        view = pawn.CurrentViewCharacter
+        if view and view != pawn and self.SideOf(view) == SWAT:
+            pawn.ClosePlayerView()
+            self.Log("closed a SWAT camera view")
 
     def InMatch(self) -> bool:
         """A PvP round is on: the host knows it; a client sees the round time the host publishes or a player
