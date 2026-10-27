@@ -62,7 +62,7 @@ Unofficial fan mod, not affiliated with VOID Interactive.
 
 **Mod name:** PvP - SWAT vs Suspects (Alpha)
 
-**Version:** 0.2.0-alpha
+**Version:** 0.2.1-alpha
 
 **Category:** Gameplay (если есть «Game Modes» — она)
 

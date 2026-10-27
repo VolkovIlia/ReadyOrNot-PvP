@@ -43,7 +43,7 @@
 
 local UEHelpers = require("UEHelpers")
 
-local Version = "0.2.0-alpha" -- the release this script ships in (CHANGELOG.md); bug reports quote it from the log
+local Version = "0.2.1-alpha" -- the release this script ships in (CHANGELOG.md); bug reports quote it from the log
 
 local ModDir =(debug.getinfo(1, "S").source:gsub("^@", ""):gsub("[\\/]Scripts[\\/]main%.lua$", ""))
 local NativeDir = ModDir .. "\\native"

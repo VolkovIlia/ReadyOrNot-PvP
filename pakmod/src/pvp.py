@@ -17,7 +17,7 @@ SWAT = 2
 SUSPECT = 3
 SQUAD = 5
 SLOT = "RoNPvP"
-VERSION = "0.2.0-alpha"
+VERSION = "0.2.1-alpha"
 COOP_MODE = "BS_COOP"
 RESPAWN_DELAY = 10.0
 SAFE_DISTANCE = 1000.0
@@ -134,6 +134,7 @@ class PvPDirector(Actor):
     Warned60: bool
     Bound: List[Object]
     Weapons: Map[str, str]
+    Kevlar: ArmourMaterial
     GunPrimary: str
     GunSecondary: str
     # squad hunt
@@ -201,11 +202,11 @@ class PvPDirector(Actor):
         self.Weapons = {
             "Primary_AKM": "Primary_SLR47", "Primary_S_AK103": "Primary_SLR47", "Primary_AK104": "Primary_SLR47",
             "Primary_AKS74U": "Primary_SLR47", "Primary_QBZ": "Primary_SLR47", "Primary_CAR": "Primary_SBR",
-            "Primary_Calico": "Primary_MP5A2", "Primary_UZI": "Primary_MP9", "Primary_M249": "Primary_FAL",
+            "Primary_Calico": "Primary_SLR47", "Primary_UZI": "Primary_SLR47", "Primary_M249": "Primary_FAL",
             "Primary_RPD": "Primary_FAL", "Primary_S_G3A3": "Primary_FAL", "Primary_S_MK18_VAR1": "Primary_MK18",
             "Primary_S_MK18_VAR2": "Primary_MK18", "Primary_S_MK18_VAR3_CMAG": "Primary_MK18",
-            "Primary_M37": "Primary_870mcs", "Primary_S_870mcs": "Primary_870mcs", "Primary_SawnOff": "Primary_870mcs",
-            "Primary_Trenchgun": "Primary_870mcs", "Secondary_Makarov": "Secondary_M92FS_V2",
+            "Primary_M37": "Primary_FAL", "Primary_S_870mcs": "Primary_FAL", "Primary_SawnOff": "Primary_FAL",
+            "Primary_Trenchgun": "Primary_FAL", "Secondary_Makarov": "Secondary_M92FS_V2",
             "Secondary_Makarov_2Handed": "Secondary_M92FS_V2", "Secondary_S_G18": "Secondary_G19_V2",
             "Secondary_S_G19": "Secondary_G19_V2", "Secondary_S_M1911": "Secondary_M1911_V2",
             "Secondary_S_Python": "Secondary_Python_V2", "Secondary_Tec9": "Secondary_P99",
@@ -689,8 +690,10 @@ class PvPDirector(Actor):
         return title
 
     def RandomPrimary(self) -> str:
-        names: List[str] = ["Primary_SLR47", "Primary_FAL", "Primary_870mcs", "Primary_MP5A2"]
-        return names[RandomIntegerInRange(0, 3)]
+        """Suspect players get rifles with full metal jacket rounds (penetration 4): pistol-calibre SMGs and
+        buckshot (penetration 0-2) do not get through even a SWAT player's default Kevlar (armour level 3)."""
+        names: List[str] = ["Primary_SLR47", "Primary_FAL"]
+        return names[RandomIntegerInRange(0, 1)]
 
     def RandomSecondary(self) -> str:
         names: List[str] = ["Secondary_M1911_V2", "Secondary_M92FS_V2", "Secondary_G19_V2", "Secondary_Python_V2", "Secondary_P99"]
@@ -777,6 +780,26 @@ class PvPDirector(Actor):
                     weapon.ReplenishAmmo()
 
     # ================================================================ AI SWAT against suspect players
+
+    def ArmourSquad(self):
+        """The AI squad wears ceramic or steel plates (armour level 6) that no bullet in the game goes through
+        until a ceramic plate wears out, and steel never does: suspect players could only wound them in the
+        limbs. In PvP the squad wears the default SWAT player's Kevlar instead, as a SWAT player would."""
+        if not self.Kevlar:
+            kevlar = MakeSoftObjectPath("/Game/Blueprints/Items/ArmorRevised/ArmorMaterials/AM_Kevlar.AM_Kevlar")
+            loaded = LoadAsset_Blocking(Conv_SoftObjPathToSoftObjRef(kevlar))
+            self.Kevlar = cast(loaded, ArmourMaterial)
+            if not self.Kevlar:
+                return
+        changed = 0
+        for ai in self.LivingSwat():
+            for item in ai.InventoryComp.InventoryItems:
+                armour = cast(item, SWATArmour)
+                if armour and armour.ArmourMaterial != self.Kevlar:
+                    armour.ArmourMaterial = self.Kevlar
+                    changed += 1
+        if changed > 0:
+            self.Log("AI squad armour -> Kevlar: " + str(changed))
 
     def FireTick(self):
         """AI SWAT never clear a player suspect for fire by themselves; the ones that see a suspect player get
@@ -1213,6 +1236,7 @@ class PvPDirector(Actor):
         if host and self.IsSuspect(host) and self.PawnOf(host):
             self.HideSquadHud()
         if self.MatchBots:
+            self.ArmourSquad()
             self.DirectSquad(now, players)
         swat_players = 0
         swat_alive = 0

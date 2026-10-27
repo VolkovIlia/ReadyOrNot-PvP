@@ -12,8 +12,10 @@ local L = {}
 -- AK-102, AK-103, G3A3 and Saiga-12 are left out: their handling (InertiaDragStrafeRotation/Location 1.0,
 -- FreeAimLimitADS up to 4.5, against 0.4/0.2 and 1.0 on the SWAT MK18) throws the sights about when a
 -- player aims while stepping sideways. SLR-47 is the AK-pattern rifle with SWAT-like handling.
+-- Only rifles: their full metal jacket rounds (penetration 4) go through a SWAT player's default Kevlar
+-- (armour level 3); pistol-calibre SMGs and buckshot (penetration 0-2) do not.
 local SuspectPrimaries = {
-    "Primary_SLR47", "Primary_FAL", "Primary_870mcs", "Primary_MP5A2",
+    "Primary_SLR47", "Primary_FAL",
 }
 local SuspectSecondaries = {
     "Secondary_M1911_V2", "Secondary_M92FS_V2", "Secondary_G19_V2", "Secondary_Python_V2", "Secondary_P99",
@@ -75,15 +77,15 @@ end
 ---------------------------------------------------------------- PvP: taking over an AI suspect
 
 -- The player version of an AI suspect's gun (WeaponsSuspect class name without "_C"), so a player who
--- takes an AI's place fights with a gun of the same kind. AKs become the SLR-47 and the G3 and machine
--- guns the FAL (see SuspectPrimaries for why).
+-- takes an AI's place fights with a gun of a similar kind. AKs and SMGs become the SLR-47, the G3,
+-- machine guns and shotguns the FAL (see SuspectPrimaries for why).
 local PlayerEquivalent = {
     Primary_AKM = "Primary_SLR47", Primary_S_AK103 = "Primary_SLR47", Primary_AK104 = "Primary_SLR47",
     Primary_AKS74U = "Primary_SLR47", Primary_QBZ = "Primary_SLR47", Primary_CAR = "Primary_SBR",
-    Primary_Calico = "Primary_MP5A2", Primary_UZI = "Primary_MP9", Primary_M249 = "Primary_FAL",
+    Primary_Calico = "Primary_SLR47", Primary_UZI = "Primary_SLR47", Primary_M249 = "Primary_FAL",
     Primary_RPD = "Primary_FAL", Primary_S_G3A3 = "Primary_FAL", Primary_S_MK18_VAR1 = "Primary_MK18",
-    Primary_S_MK18_VAR2 = "Primary_MK18", Primary_S_MK18_VAR3_CMAG = "Primary_MK18", Primary_M37 = "Primary_870mcs",
-    Primary_S_870mcs = "Primary_870mcs", Primary_SawnOff = "Primary_870mcs", Primary_Trenchgun = "Primary_870mcs",
+    Primary_S_MK18_VAR2 = "Primary_MK18", Primary_S_MK18_VAR3_CMAG = "Primary_MK18", Primary_M37 = "Primary_FAL",
+    Primary_S_870mcs = "Primary_FAL", Primary_SawnOff = "Primary_FAL", Primary_Trenchgun = "Primary_FAL",
     Secondary_Makarov = "Secondary_M92FS_V2", Secondary_Makarov_2Handed = "Secondary_M92FS_V2",
     Secondary_S_G18 = "Secondary_G19_V2", Secondary_S_G19 = "Secondary_G19_V2", Secondary_S_M1911 = "Secondary_M1911_V2",
     Secondary_S_Python = "Secondary_Python_V2", Secondary_Tec9 = "Secondary_P99", Secondary_Flaregun = "Secondary_M1911_V2",
@@ -208,9 +210,41 @@ local function StripSwatGear(pawn)
     return #doomed
 end
 
+-- The AI squad wears ceramic or steel plates (armour level 6) that no bullet in the game goes through
+-- until a ceramic plate wears out, and steel never does: suspect players could only wound them in the
+-- limbs. In PvP the squad wears the default SWAT player's Kevlar instead, as a SWAT player would.
+local KevlarPath = "/Game/Blueprints/Items/ArmorRevised/ArmorMaterials/AM_Kevlar.AM_Kevlar"
+
+local function ArmourSquad(swat)
+    local kevlar = StaticFindObject(KevlarPath)
+    if not Valid(kevlar) then
+        pcall(LoadAsset, KevlarPath)
+        kevlar = StaticFindObject(KevlarPath)
+        if not Valid(kevlar) then return 0 end
+    end
+    local armourClass = StaticFindObject("/Script/ReadyOrNot.SWATArmour")
+    local changed = 0
+    for _, ai in ipairs(swat) do
+        pcall(function()
+            ai.InventoryComp.InventoryItems:ForEach(function(_, element)
+                local item = element:get()
+                if Valid(item) and item:IsA(armourClass) then
+                    local material = item.ArmourMaterial
+                    if not Valid(material) or material:GetAddress() ~= kevlar:GetAddress() then
+                        item.ArmourMaterial = kevlar
+                        changed = changed + 1
+                    end
+                end
+            end)
+        end)
+    end
+    if changed > 0 then Log("AI squad armour -> Kevlar: %d", changed) end
+    return changed
+end
+
 L.SuspectPrimaries, L.SuspectSecondaries = SuspectPrimaries, SuspectSecondaries
 L.PlayerWeapon, L.WeaponTitle, L.FillMagazines, L.EquipSuspectLoadout = PlayerWeapon, WeaponTitle, FillMagazines, EquipSuspectLoadout
 L.GunsFor, L.PrepareSuspectSpawn, L.EquipSuspectKit, L.StripSwatGear = GunsFor, PrepareSuspectSpawn, EquipSuspectKit, StripSwatGear
-L.ApplySuspectOutfit = ApplySuspectOutfit
+L.ApplySuspectOutfit, L.ArmourSquad = ApplySuspectOutfit, ArmourSquad
 
 return L

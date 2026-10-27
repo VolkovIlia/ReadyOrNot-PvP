@@ -882,7 +882,10 @@ end
 local function LiveTick(now, players)
     local host = HostPlayer(players)
     if host and Match.Suspects[host.Name] and host.Pawn then C.HideSquadHud() end
-    if Match.Bots then DirectSquad(now, players) end
+    if Match.Bots then
+        L.ArmourSquad(LivingSwat())
+        DirectSquad(now, players)
+    end
     local swatPlayers, swatAlive, suspectAlive, waiting = 0, 0, 0, 0
     local aiLeft = #LivingAiSuspects()
     for _, player in ipairs(players) do
