@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0-alpha — 27.10.2026
+## 0.4.0-alpha — 28.10.2026
 
 - **Scoreboard on Tab** during a PvP round, over the mission journal:
   - the round, the score and the time left;
