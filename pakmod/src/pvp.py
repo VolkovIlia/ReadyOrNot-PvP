@@ -168,9 +168,11 @@ class PvPDirector(Actor):
     Stripped: List[Actor]
     LockedDoors: List[Door]
     DoorsReady: bool
-    PickupBy: Map[BaseMagazineWeapon, ReadyOrNotCharacter]
-    PickupPath: Map[BaseMagazineWeapon, str]
+    PickupBy: Map[Actor, ReadyOrNotCharacter]
+    PickupPath: Map[Actor, str]
+    PickupEvidence: Map[Actor, EvidenceComponent]
     PickupAt: float
+    DoorsAt: float
     Removed: List[Actor]
     SquadSeen: bool
     HostWait: float
@@ -891,7 +893,51 @@ class PvPDirector(Actor):
         soft = MakeSoftClassPath(path)
         return LoadClassAsset_Blocking(Conv_SoftClassPathToSoftClassRef(soft))
 
-    def WeaponTitle(self, name: str) -> str:
+    def GunShortName(self, name: str) -> str:
+        """Primary_MPX for "Primary_MPX" and for its class path "/Game/.../Primary_MPX.Primary_MPX_C"."""
+        if not StartsWith(name, "/", 0):
+            return name
+        found, left, right = Split(name, ".", 1, 1)
+        if not found:
+            return name
+        return LeftChop(right, 2)
+
+    def GunKind(self, name: str) -> str:
+        """"shotgun", "smg" or "rifle" by what a gun's name tells."""
+        short = self.GunShortName(name)
+        for word in ["870", "1301", "Benelli", "Saiga", "S590", "Superbnova", "M37", "SawnOff", "Trenchgun", "Shotgun"]:
+            if Contains(short, word, False, False):
+                return "shotgun"
+        for word in ["MP", "UMP", "P90", "SPC9", "PDW", "UZI", "Calico", "Mac", "Vector", "Kriss"]:
+            if Contains(short, word, False, False):
+                return "smg"
+        return "rifle"
+
+    def PlayerGun(self, item: Object) -> str:
+        """The player gun a suspect player gets for a gun (in an AI suspect's hands or dropped): a player gun as it is
+        (its class path: the WeaponsRevised ones and the DLC ones), an AI suspect's gun as its player version (by the
+        map, else by its kind); "" for anything else, the less-lethal guns too."""
+        name = self.ClassName(item)
+        if not StartsWith(name, "Primary_", 0) and not StartsWith(name, "Secondary_", 0):
+            return ""
+        if Contains(name, "Pepperball", False, False) or Contains(name, "Beanbag", False, False) or Contains(name, "Taser", False, False):
+            return ""
+        if name in self.Weapons:
+            return self.Weapons[name]
+        path = GetPathName(GetObjectClass(item))
+        if not Contains(path, "/WeaponsSuspect/", False, False):
+            return path
+        if StartsWith(name, "Secondary_", 0):
+            return "Secondary_G19_V2"
+        kind = self.GunKind(name)
+        if kind == "shotgun":
+            return "Primary_870mcs"
+        if kind == "smg":
+            return "Primary_MP5A2"
+        return "Primary_SLR47"
+
+    def WeaponTitle(self, gun: str) -> str:
+        name = self.GunShortName(gun)
         found, left, right = Split(name, "_", 1, 0)
         title = name
         if found:
@@ -911,9 +957,10 @@ class PvPDirector(Actor):
     def Rifle(self, name: str) -> str:
         """Balanced rules: pistol-calibre SMGs and buckshot (penetration 0-2) do not get through even a SWAT
         player's default Kevlar (armour level 3), so they become the SLR-47 and the FAL."""
-        if name == "Primary_MP5A2" or name == "Primary_MP9":
+        kind = self.GunKind(name)
+        if kind == "smg":
             return "Primary_SLR47"
-        if name == "Primary_870mcs":
+        if kind == "shotgun":
             return "Primary_FAL"
         return name
 
@@ -934,15 +981,20 @@ class PvPDirector(Actor):
         only); balanced rules turn SMGs and shotguns into rifles and fill a missing slot at random."""
         self.GunPrimary = ""
         self.GunSecondary = ""
+        carried = ""
         for item in ai.InventoryComp.InventoryItems:
             if not item:
                 continue
+            gun = self.PlayerGun(item)
+            if gun == "":
+                continue
             name = self.ClassName(item)
-            if name in self.Weapons:
-                if StartsWith(name, "Primary_", 0) and self.GunPrimary == "":
-                    self.GunPrimary = self.Weapons[name]
-                if StartsWith(name, "Secondary_", 0) and self.GunSecondary == "":
-                    self.GunSecondary = self.Weapons[name]
+            carried = carried + ("" if carried == "" else ", ") + name
+            if StartsWith(name, "Primary_", 0) and self.GunPrimary == "":
+                self.GunPrimary = gun
+            if StartsWith(name, "Secondary_", 0) and self.GunSecondary == "":
+                self.GunSecondary = gun
+        self.Log("AI suspect's guns: " + ("none" if carried == "" else carried))
         if self.State.Rules == RULES_BALANCED:
             if self.GunPrimary == "":
                 self.GunPrimary = self.RandomPrimary()
@@ -953,8 +1005,9 @@ class PvPDirector(Actor):
             self.GunSecondary = self.RandomSecondary()
 
     def WeaponPath(self, name: str) -> str:
-        if name == "":
-            return ""
+        """The class path of a player gun by its name in WeaponsRevised (a class path stays as it is)."""
+        if name == "" or StartsWith(name, "/", 0):
+            return name
         return "/Game/Blueprints/Items/WeaponsRevised/" + name + "." + name + "_C"
 
     def GunsTitle(self, primary: str, secondary: str) -> str:
@@ -1031,11 +1084,10 @@ class PvPDirector(Actor):
     # ================================================================ doors and dropped guns
 
     def DoorsTick(self):
-        """Suspects open any door: Door.bSuspectAlwaysUnlocks lets team 3 through a locked door (the game's own
-        rule in CanOpenDoor and in the opening itself), SWAT still find it locked. Opening unlocks a door, so a
-        door locked at the round start locks again once it is closed and a suspect used it last (a SWAT
-        lockpick or breach stays). bSuspectKnowsLockState stays off, so a client's own check lets a suspect
-        player try the door."""
+        """Suspects open any door: Door.bSuspectAlwaysUnlocks lets team 3 through a locked door in the game's own
+        CanOpenDoor and opening code, SWAT still find it locked. bSuspectKnowsLockState stays off, so a client's own
+        check lets a suspect player try the door. A player's interaction still offers a suspect the multitool on a
+        locked door, so SuspectDoors also unlocks the door a suspect player stands at."""
         if not self.DoorsReady:
             self.DoorsReady = True
             for actor in GetAllActorsOfClass(Door):
@@ -1047,63 +1099,123 @@ class PvPDirector(Actor):
                     if door.IsLocked():
                         self.LockedDoors.append(door)
             self.Log(f"doors: suspects open all of them, {len(self.LockedDoors)} locked")
-        for door in self.LockedDoors:
-            if door.IsLocked() or door.bDoorBroken or not door.IsClosed():
-                continue
-            user = door.GetLastDoorUser()
-            if user and user.DefaultTeam == SUSPECT:
-                door.SetLocked(True)
-                door.bSuspectKnowsLockState = False
 
-    def PickupTarget(self, gun: BaseMagazineWeapon) -> str:
-        """The class path a suspect player gets for a dropped gun: a player gun as it is, an AI suspect's gun as
-        its player version (balanced rules: a rifle for an SMG or a shotgun); "" for anything else."""
-        name = self.ClassName(gun)
-        path = GetPathName(GetObjectClass(gun))
-        if Contains(path, "/WeaponsRevised/", False, False):
-            if StartsWith(name, "Primary_", 0) or StartsWith(name, "Secondary_", 0):
-                return path
-            return ""
-        if name in self.Weapons:
-            target = self.Weapons[name]
-            if self.State.Rules == RULES_BALANCED:
-                target = self.Rifle(target)
-            return self.WeaponPath(target)
+    def SuspectDoors(self, now: float):
+        """A locked door with a suspect player within 2.2 m unlocks for him; once no suspect player is near and it is
+        closed again it locks again, unless SWAT used it last (a SWAT lockpick or breach stays)."""
+        if now < self.DoorsAt:
+            return
+        self.DoorsAt = now + 0.2
+        suspects: List[ReadyOrNotCharacter] = []
+        for pc in self.Players():
+            pawn = self.PawnOf(pc)
+            if pawn and pawn.DefaultTeam == SUSPECT:
+                suspects.append(pawn)
+        for door in self.HopDoors:
+            if not IsValid(door) or door.bDoorBroken:
+                continue
+            at = door.K2_GetActorLocation()
+            near = False
+            for pawn in suspects:
+                if Vector_Distance(pawn.K2_GetActorLocation(), at) < 220.0:
+                    near = True
+            if near and door.IsLocked():
+                door.SetLocked(False)
+                door.bSuspectKnowsLockState = False
+                if not (door in self.LockedDoors):
+                    self.LockedDoors.append(door)
+            elif not near and not door.IsLocked() and door.IsClosed() and door in self.LockedDoors:
+                user = door.GetLastDoorUser()
+                if not user or user.DefaultTeam == SUSPECT:
+                    door.SetLocked(True)
+                    door.bSuspectKnowsLockState = False
+
+    def EvidenceGun(self, item: EvidenceActor) -> str:
+        """A gun lying as mission evidence (a prop, not a dropped weapon): the player gun its class, name or mesh
+        tells (a scoped bolt-action rifle is the TAC-700); "" for other evidence."""
+        words = GetObjectName(GetObjectClass(item)) + " " + Conv_TextToString(item.EvidenceName)
+        if item.StaticMesh and item.StaticMesh.StaticMesh:
+            words = words + " " + GetObjectName(item.StaticMesh.StaticMesh)
+        for word in ["Sniper", "снайпер", "700", "Bolt", "Scope", "Marksman"]:
+            if Contains(words, word, False, False):
+                return "Primary_TAC700"
+        for word in ["Shotgun", "дробов", "870", "Saiga"]:
+            if Contains(words, word, False, False):
+                return "Primary_870mcs"
+        for word in ["AK", "Kalash", "Калашник", "автомат"]:
+            if Contains(words, word, False, False):
+                return "Primary_SLR47"
+        for word in ["SMG", "Uzi", "MP5", "Tec", "пистолет-пулем"]:
+            if Contains(words, word, False, False):
+                return "Primary_MP5A2"
+        for word in ["Rifle", "винтовк", "Carbine", "карабин", "M4", "AR15"]:
+            if Contains(words, word, False, False):
+                return "Primary_SBR"
+        for word in ["Glock", "Pistol", "пистолет", "Handgun", "Revolver", "револьвер", "1911", "Beretta"]:
+            if Contains(words, word, False, False):
+                return "Secondary_G19_V2"
         return ""
 
+    def PickupTarget(self, actor: Actor) -> str:
+        """The class path a suspect player gets for a gun he collects as evidence: a dropped gun as PlayerGun has
+        it, a gun lying as mission evidence as EvidenceGun has it (balanced rules: a rifle for an SMG or a shotgun);
+        "" for anything else."""
+        target = ""
+        gun = cast(actor, BaseMagazineWeapon)
+        if gun:
+            target = self.PlayerGun(gun)
+        prop = cast(actor, EvidenceActor)
+        if prop:
+            target = self.EvidenceGun(prop)
+            self.Log(f"evidence {GetObjectName(GetObjectClass(prop))} [{Conv_TextToString(prop.EvidenceName)}] -> {target}")
+        if target == "":
+            return ""
+        if self.State.Rules == RULES_BALANCED and StartsWith(self.GunShortName(target), "Primary_", 0):
+            target = self.Rifle(target)
+        return self.WeaponPath(target)
+
+    def WatchPickup(self, actor: Actor, evidence: EvidenceComponent):
+        """Notes a suspect player collecting a gun (EvidenceComponent.CollectingCharacter, known on the server),
+        forgets a collection broken off."""
+        if evidence.bIsBeingCollected:
+            collector = evidence.CollectingCharacter
+            if collector and not (actor in self.PickupBy) and collector.DefaultTeam == SUSPECT \
+                    and cast(collector.Controller, ReadyOrNotPlayerController):
+                path = self.PickupTarget(actor)
+                if path != "":
+                    self.PickupBy[actor] = collector
+                    self.PickupPath[actor] = path
+                    self.PickupEvidence[actor] = evidence
+        elif actor in self.PickupBy and evidence.GetEvidenceState() != EVIDENCE_COLLECTED:
+            self.PickupBy.remove(actor)
+            self.PickupPath.remove(actor)
+            self.PickupEvidence.remove(actor)
+
     def PickupTick(self, now: float):
-        """A suspect player who collects a dropped gun as evidence (holds the use key on it) gets the gun
-        instead. The collector is noted while the evidence is being collected (EvidenceComponent.
-        CollectingCharacter, known on the server); the gun is handed over once the collection is done."""
+        """A suspect player who collects a gun as evidence (holds the use key on it: a dropped gun or a gun lying
+        as mission evidence) gets the gun instead, once the collection is done."""
         if now < self.PickupAt:
             return
         self.PickupAt = now + 0.2
         for actor in GetAllActorsOfClass(BaseMagazineWeapon):
             gun = cast(actor, BaseMagazineWeapon)
-            if not gun or not gun.EvidenceComponent:
-                continue
-            evidence = gun.EvidenceComponent
-            if evidence.bIsBeingCollected:
-                collector = evidence.CollectingCharacter
-                if collector and not (gun in self.PickupBy) and collector.DefaultTeam == SUSPECT \
-                        and cast(collector.Controller, ReadyOrNotPlayerController):
-                    path = self.PickupTarget(gun)
-                    if path != "":
-                        self.PickupBy[gun] = collector
-                        self.PickupPath[gun] = path
-            elif gun in self.PickupBy and evidence.GetEvidenceState() != EVIDENCE_COLLECTED:
-                # the collection was broken off
-                self.PickupBy.remove(gun)
-                self.PickupPath.remove(gun)
-        done: List[BaseMagazineWeapon] = []
-        for gun in self.PickupBy:
-            if not IsValid(gun) or gun.EvidenceComponent.GetEvidenceState() == EVIDENCE_COLLECTED:
-                done.append(gun)
-        for gun in done:
-            pawn = self.PickupBy[gun]
-            path = self.PickupPath[gun]
-            self.PickupBy.remove(gun)
-            self.PickupPath.remove(gun)
+            if gun and gun.EvidenceComponent:
+                self.WatchPickup(actor, gun.EvidenceComponent)
+        for actor in GetAllActorsOfClass(EvidenceActor):
+            prop = cast(actor, EvidenceActor)
+            if prop and prop.EvidenceComponent:
+                self.WatchPickup(actor, prop.EvidenceComponent)
+        done: List[Actor] = []
+        for actor in self.PickupBy:
+            evidence = self.PickupEvidence[actor]
+            if not IsValid(actor) or not IsValid(evidence) or evidence.GetEvidenceState() == EVIDENCE_COLLECTED:
+                done.append(actor)
+        for actor in done:
+            pawn = self.PickupBy[actor]
+            path = self.PickupPath[actor]
+            self.PickupBy.remove(actor)
+            self.PickupPath.remove(actor)
+            self.PickupEvidence.remove(actor)
             if pawn and not self.IsDown(pawn):
                 self.GrantGun(pawn, path)
 
@@ -1125,8 +1237,7 @@ class PvPDirector(Actor):
             secondary = path
         self.EquipKit(pawn, self.KitLoadout(primary, secondary), is_primary)
         self.FillMagazines(pawn)
-        found, left, right = Split(path, ".", 1, 1)
-        title = self.WeaponTitle(LeftChop(right, 2)) if found else path
+        title = self.WeaponTitle(path)
         pc = cast(pawn.Controller, ReadyOrNotPlayerController)
         self.Log(f"{self.NameOf(pc)} picked up {title}")
         self.Notify(pc, self.L("Подобрано: ", "Picked up: ") + title)
@@ -1883,6 +1994,7 @@ class PvPDirector(Actor):
             self.HoldStart()
         if self.State.Phase == "live":
             self.PickupTick(now)
+            self.SuspectDoors(now)
             self.TrackTick(now)
         if len(self.ConvertAi) == 0:
             return

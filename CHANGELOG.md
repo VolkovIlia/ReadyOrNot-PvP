@@ -33,6 +33,14 @@
   is not fighting, it hops every 12 s to a doorway up to 16 m closer to the last sighting, gunshot or hint (never
   within 9 m of a suspect player or in sight of one), walks the last metres and fights on its own on contact.
   Hints come every 30 s and are closer (±8 m).
+- **Suspect players get the AI's real guns.** Only the AI suspects' own guns were matched, so an AI carrying a
+  player gun (an MPX, an M4, a DLC gun) gave a pistol only; now a player gun is handed over as it is, and an
+  unknown AI gun by its kind. The log names the AI's guns.
+- **Locked doors for suspects:** the game still offered a suspect player the multitool on a locked door; a locked
+  door now unlocks while a suspect player stands at it and locks again when it is closed and no suspect is near
+  (unless SWAT used it last).
+- **Guns lying as evidence** (a scoped rifle on a table and the like) can be picked up by a suspect like a dropped
+  gun: a sniper rifle becomes the TAC-700, other guns by their kind.
 - The legacy UE4SS version (HostBrain) freezes the AI squad when it is installed next to the Mods-menu version: its
   native guards load even when it leaves the mission to the pak. Turn it off or uninstall it.
 - **A native look:**
