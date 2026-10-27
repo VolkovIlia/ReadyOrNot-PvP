@@ -195,6 +195,16 @@ class PvPDirector(Actor):
     Kevlar: ArmourMaterial
     GunPrimary: str
     GunSecondary: str
+    GunPrimaryAmmo: str
+    GunPrimaryMags: int
+    GunSecondaryAmmo: str
+    GunSecondaryMags: int
+    BodyArmour: SuspectArmourData
+    HeadArmour: SuspectArmourData
+    HasBodyArmour: bool
+    HasHeadArmour: bool
+    PawnBody: Map[ReadyOrNotCharacter, ArmourMaterial]
+    PawnHead: Map[ReadyOrNotCharacter, ArmourMaterial]
     Protected: Map[ReadyOrNotCharacter, float]
     # kills: everyone seen standing (with a name for the kill feed), the fallen
     Alive: Map[ReadyOrNotCharacter, str]
@@ -617,6 +627,8 @@ class PvPDirector(Actor):
         self.RulesTold = False
         self.MenuHidden = False
         self.Protected.clear()
+        self.PawnBody.clear()
+        self.PawnHead.clear()
         self.Alive.clear()
         self.Fallen.clear()
         self.SquadSized = False
@@ -814,6 +826,7 @@ class PvPDirector(Actor):
         self.ApplySuspectOutfit(self.StateOf(pc))
         stripped = self.StripSwatGear(pawn)
         self.FillMagazines(pawn)
+        self.KitArmourAndAmmo(pawn)
         self.Stripped.append(pawn)
         self.Suspects[name] = True
         self.DeathAt.remove(name)
@@ -822,6 +835,10 @@ class PvPDirector(Actor):
         self.Notify(pc, self.SuspectLine(self.GunsTitle(primary, secondary)))
 
     def SuspectLine(self, guns: str) -> str:
+        if self.State.Rules == RULES_VANILLA and self.HasBodyArmour:
+            guns = guns + self.L(", бронежилет", ", body armour")
+        if self.State.Rules == RULES_VANILLA and self.HasHeadArmour:
+            guns = guns + self.L(", шлем", ", helmet")
         left = len(self.LivingAiSuspects())
         return self.L(f"Вы — подозреваемый — {guns} — ИИ-подозреваемых в запасе: {left}",
                       f"You are a suspect — {guns} — AI suspects left: {left}")
@@ -868,6 +885,7 @@ class PvPDirector(Actor):
         self.ApplySuspectOutfit(self.StateOf(pc))
         stripped = self.StripSwatGear(pawn)
         self.FillMagazines(pawn)
+        self.KitArmourAndAmmo(pawn)
         self.Stripped.append(pawn)
         self.DeathAt.remove(name)
         self.Protect(pawn)
@@ -946,7 +964,7 @@ class PvPDirector(Actor):
         for word in ["870", "1301", "Benelli", "Saiga", "S590", "Superbnova", "M37", "SawnOff", "Trenchgun", "Shotgun"]:
             if Contains(short, word, False, False):
                 return "shotgun"
-        for word in ["MP", "UMP", "P90", "SPC9", "PDW", "UZI", "Calico", "Mac", "Vector", "Kriss"]:
+        for word in ["MP", "UMP", "P90", "SPC9", "PDW", "UZI", "Calico", "Mac", "Vector", "Kriss", "M76"]:
             if Contains(short, word, False, False):
                 return "smg"
         return "rifle"
@@ -1021,20 +1039,46 @@ class PvPDirector(Actor):
         only); balanced rules turn SMGs and shotguns into rifles and fill a missing slot at random."""
         self.GunPrimary = ""
         self.GunSecondary = ""
+        self.GunPrimaryAmmo = ""
+        self.GunPrimaryMags = 0
+        self.GunSecondaryAmmo = ""
+        self.GunSecondaryMags = 0
+        self.HasBodyArmour = False
+        self.HasHeadArmour = False
         carried = ""
         for item in ai.InventoryComp.InventoryItems:
             if not item:
+                continue
+            armour = cast(item, SuspectArmour)
+            if armour:
+                if armour.ArmourData.bIsHelmet:
+                    self.HeadArmour = armour.ArmourData
+                    self.HasHeadArmour = True
+                else:
+                    self.BodyArmour = armour.ArmourData
+                    self.HasBodyArmour = True
+                carried = carried + ("" if carried == "" else ", ") + f"armour level {armour.ArmourData.ArmourLevel}"
                 continue
             gun = self.PlayerGun(item)
             if gun == "":
                 continue
             name = self.ClassName(item)
-            carried = carried + ("" if carried == "" else ", ") + name
+            weapon = cast(item, BaseMagazineWeapon)
+            ammo = ""
+            mags = 0
+            if weapon:
+                ammo = self.AmmoOf(weapon)
+                mags = len(weapon.Magazines)
+            carried = carried + ("" if carried == "" else ", ") + f"{name} {mags}x{ammo}"
             if StartsWith(name, "Primary_", 0) and self.GunPrimary == "":
                 self.GunPrimary = gun
+                self.GunPrimaryAmmo = ammo
+                self.GunPrimaryMags = mags
             if StartsWith(name, "Secondary_", 0) and self.GunSecondary == "":
                 self.GunSecondary = gun
-        self.Log("AI suspect's guns: " + ("none" if carried == "" else carried))
+                self.GunSecondaryAmmo = ammo
+                self.GunSecondaryMags = mags
+        self.Log("AI suspect's kit: " + ("none" if carried == "" else carried))
         if self.State.Rules == RULES_BALANCED:
             if self.GunPrimary == "":
                 self.GunPrimary = self.RandomPrimary()
@@ -1058,18 +1102,105 @@ class PvPDirector(Actor):
         return self.WeaponTitle(primary) + " + " + self.WeaponTitle(secondary)
 
     def SuspectLoadout(self, primary: str, secondary: str) -> SavedLoadout:
-        return self.KitLoadout(self.WeaponPath(primary), self.WeaponPath(secondary))
+        """The kit for the AI suspect GunsFor read last: under vanilla rules with a vest and a helmet where it wore
+        armour."""
+        vanilla = self.State.Rules == RULES_VANILLA
+        return self.KitLoadout(self.WeaponPath(primary), self.WeaponPath(secondary), vanilla and self.HasBodyArmour, vanilla and self.HasHeadArmour)
 
-    def KitLoadout(self, primary_path: str, secondary_path: str) -> SavedLoadout:
-        """The suspect kit: the guns (class paths, "" for an empty slot), no armour, no helmet, no grenades."""
+    def KitLoadout(self, primary_path: str, secondary_path: str, vest: bool, helmet: bool) -> SavedLoadout:
+        """The suspect kit: the guns (class paths, "" for an empty slot), a player's light vest and helmet or the
+        "none" ones, no grenades."""
         loadout = SavedLoadout(PrimaryAmmoSlotsCount=-1, SecondaryAmmoSlotsCount=-1, GrenadeSlotsCount=0, TacticalSlotsCount=0)
         if primary_path != "":
             loadout.Primary = self.LoadClassPath(primary_path)
         if secondary_path != "":
             loadout.Secondary = self.LoadClassPath(secondary_path)
-        loadout.Armor = self.LoadClassPath("/Game/Blueprints/Items/ArmorRevised/Armor_NoArmor.Armor_NoArmor_C")
-        loadout.Helmet = self.LoadClassPath("/Game/Blueprints/Items/ArmorRevised/Helmet_None.Helmet_None_C")
+        if vest:
+            loadout.Armor = self.LoadClassPath("/Game/Blueprints/Items/ArmorRevised/Armor_Light_V2.Armor_Light_V2_C")
+        else:
+            loadout.Armor = self.LoadClassPath("/Game/Blueprints/Items/ArmorRevised/Armor_NoArmor.Armor_NoArmor_C")
+        if helmet:
+            loadout.Helmet = self.LoadClassPath("/Game/Blueprints/Items/ArmorRevised/Helmet_NoAccessory.Helmet_NoAccessory_C")
+        else:
+            loadout.Helmet = self.LoadClassPath("/Game/Blueprints/Items/ArmorRevised/Helmet_None.Helmet_None_C")
         return loadout
+
+    def AmmoOf(self, weapon: BaseMagazineWeapon) -> str:
+        """The ammo row a gun's magazines hold (HasAnyAmmoOfType over the rows of its ammo table)."""
+        if not weapon.AmmoDataTable:
+            return ""
+        rows = DataTableFunctionLibrary.GetDataTableRowNames(weapon.AmmoDataTable)
+        for row in rows:
+            if weapon.HasAnyAmmoOfType(row):
+                return Conv_NameToString(row)
+        return ""
+
+    def MaterialFor(self, data: SuspectArmourData) -> ArmourMaterial:
+        """A player armour material with an AI suspect's armour values: level, the damage it lets through, how many
+        hits it takes, spalling and the slowdown."""
+        material = cast(SpawnObject(ArmourMaterial, self), ArmourMaterial)
+        material.ArmourLevel = data.ArmourLevel
+        material.DamageReduction = 1.0 - data.DamageMultiplier
+        material.Durability = data.Durability
+        material.bDurabilityEnabled = data.Durability > 0.0
+        material.MinDamageReduction = 0.0 if data.Durability > 0.0 else material.DamageReduction
+        material.SpallingChance = data.SpallingChance
+        material.MovementSpeedModifier = data.MovementSpeedMultiplier
+        material.MovementAccelerationModifier = data.MovementAccelerationMultiplier
+        kevlar = self.KevlarMaterial()
+        if kevlar:
+            material.HitParticle = kevlar.HitParticle
+            material.DisplayName = kevlar.DisplayName
+            material.Priority = kevlar.Priority
+        return material
+
+    def KitArmourAndAmmo(self, pawn: ReadyOrNotCharacter):
+        """Vanilla rules: the AI suspect GunsFor read last keeps its armour (the vest and helmet take materials
+        with its armour's values; a suspect's own armour does not protect a player) and its magazines (as many,
+        with its ammo)."""
+        self.PawnBody.remove(pawn)
+        self.PawnHead.remove(pawn)
+        if self.State.Rules != RULES_VANILLA:
+            return
+        if self.HasBodyArmour:
+            self.PawnBody[pawn] = self.MaterialFor(self.BodyArmour)
+        if self.HasHeadArmour:
+            self.PawnHead[pawn] = self.MaterialFor(self.HeadArmour)
+        self.DressArmour(pawn)
+        for item in pawn.InventoryComp.InventoryItems:
+            weapon = cast(item, BaseMagazineWeapon)
+            if weapon:
+                name = self.ClassName(item)
+                if StartsWith(name, "Primary_", 0):
+                    self.LoadMagazines(weapon, self.GunPrimaryAmmo, self.GunPrimaryMags)
+                elif StartsWith(name, "Secondary_", 0):
+                    self.LoadMagazines(weapon, self.GunSecondaryAmmo, self.GunSecondaryMags)
+
+    def DressArmour(self, pawn: ReadyOrNotCharacter):
+        """The vest and the helmet of a suspect player get the materials KitArmourAndAmmo made for him (again after
+        a pickup re-equips the kit), with full durability."""
+        for item in pawn.InventoryComp.InventoryItems:
+            armour = cast(item, SWATArmour)
+            if not armour:
+                continue
+            name = self.ClassName(item)
+            material: ArmourMaterial = None
+            if StartsWith(name, "Armor_", 0) and pawn in self.PawnBody:
+                material = self.PawnBody[pawn]
+            if StartsWith(name, "Helmet_", 0) and pawn in self.PawnHead:
+                material = self.PawnHead[pawn]
+            if material:
+                armour.ArmourMaterial = material
+                for i in range(len(armour.Durabilities)):
+                    armour.Durabilities[i] = material.Durability
+
+    def LoadMagazines(self, weapon: BaseMagazineWeapon, ammo: str, count: int):
+        if ammo == "" or count <= 0:
+            return
+        types: List[Name] = []
+        for i in range(count):
+            types.append(Name(ammo))
+        weapon.SetMagazineCount(count, types)
 
     def PrepareSuspectSpawn(self, state: ReadyOrNotPlayerState, primary: str, secondary: str):
         """The next spawn of this player gets the suspect kit and the game's suspect clothes
@@ -1179,11 +1310,11 @@ class PvPDirector(Actor):
         return self.GunByWords(words)
 
     def GunByWords(self, words: str) -> str:
-        """The player gun a prop's names tell: a sniper rifle is the M76 (the player's scoped marksman rifle; the
-        TAC-700 is a pepperball launcher), a rifle with no more said the SBR; "" for no gun."""
-        for word in ["Sniper", "снайпер", "M25", "M24", "Marksman", "M76"]:
+        """The player gun a prop's names tell: a sniper rifle is the M14 (the M25 is built on it; the M76 is a 9 mm
+        SMG and the TAC-700 a pepperball launcher), a rifle with no more said the SBR; "" for no gun."""
+        for word in ["Sniper", "снайпер", "M25", "M24", "Marksman", "M14"]:
             if Contains(words, word, False, False):
-                return "Primary_M76"
+                return "Primary_M14"
         for word in ["Shotgun", "дробов", "870", "Saiga"]:
             if Contains(words, word, False, False):
                 return "Primary_870mcs"
@@ -1311,8 +1442,9 @@ class PvPDirector(Actor):
             primary = path
         else:
             secondary = path
-        self.EquipKit(pawn, self.KitLoadout(primary, secondary), is_primary)
+        self.EquipKit(pawn, self.KitLoadout(primary, secondary, pawn in self.PawnBody, pawn in self.PawnHead), is_primary)
         self.FillMagazines(pawn)
+        self.DressArmour(pawn)
         title = self.WeaponTitle(path)
         pc = cast(pawn.Controller, ReadyOrNotPlayerController)
         self.Log(f"{self.NameOf(pc)} picked up {title}")
@@ -1326,12 +1458,8 @@ class PvPDirector(Actor):
         limbs. Under balanced rules the squad wears the default SWAT player's Kevlar instead."""
         if self.State.Rules != RULES_BALANCED:
             return
-        if not self.Kevlar:
-            kevlar = MakeSoftObjectPath("/Game/Blueprints/Items/ArmorRevised/ArmorMaterials/AM_Kevlar.AM_Kevlar")
-            loaded = LoadAsset_Blocking(Conv_SoftObjPathToSoftObjRef(kevlar))
-            self.Kevlar = cast(loaded, ArmourMaterial)
-            if not self.Kevlar:
-                return
+        if not self.KevlarMaterial():
+            return
         changed = 0
         for ai in self.LivingSwat():
             for item in ai.InventoryComp.InventoryItems:
@@ -1341,6 +1469,14 @@ class PvPDirector(Actor):
                     changed += 1
         if changed > 0:
             self.Log("AI squad armour -> Kevlar: " + str(changed))
+
+    def KevlarMaterial(self) -> ArmourMaterial:
+        """A SWAT player's default armour material."""
+        if not self.Kevlar:
+            kevlar = MakeSoftObjectPath("/Game/Blueprints/Items/ArmorRevised/ArmorMaterials/AM_Kevlar.AM_Kevlar")
+            loaded = LoadAsset_Blocking(Conv_SoftObjPathToSoftObjRef(kevlar))
+            self.Kevlar = cast(loaded, ArmourMaterial)
+        return self.Kevlar
 
     def BotCount(self, players: List[ReadyOrNotPlayerController]) -> int:
         """AI officers for this mission: the host's pick in the SWAT slots, at most the slots the SWAT players

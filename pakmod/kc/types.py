@@ -114,6 +114,10 @@ def from_record(record):
                                                               "array", "map", "set", "delegate", "mcdelegate")}
     if t in simple:
         return Type(simple[t])
+    if t == "UInt32Property":
+        # a game property only (no Blueprint variable has this type): 4 bytes like an int, so an int value is
+        # copied into it as it is
+        return Type("int")
     if t == "ObjectProperty":
         return Type("object", cls=record.get("property_class"))
     if t == "WeakObjectProperty":

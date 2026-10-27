@@ -45,9 +45,13 @@
   door now unlocks while a suspect player stands at it and locks again when it is closed and no suspect is near
   (unless SWAT used it last).
 - **Guns to report become guns to take:** a suspect who "reports" a gun the mission keeps as a thing to report to
-  TOC (the Penthouse's M25 rifles) takes it instead: it leaves the table and a sniper rifle becomes the M76 (the
-  player's scoped marksman rifle; the TAC-700 is a pepperball launcher). Guns lying as evidence are picked up like
-  dropped ones.
+  TOC (the Penthouse's M25 rifles) takes it instead: it leaves the table and a sniper rifle becomes the M14 (the
+  M25 is built on it; the game's M76 is a 9 mm SMG and the TAC-700 a pepperball launcher). Guns lying as evidence
+  are picked up like dropped ones.
+- **Vanilla rules keep the whole AI kit.** A suspect player gets the AI suspect's guns (their player versions), as
+  many magazines with the same ammo (an AI's .380 P250 stays .380), and its armour: a suspect's own armour does
+  not protect a player, so a vest (and a helmet) take a material with the AI armour's level, damage reduction,
+  durability and slowdown. A pickup keeps the armour.
 - The legacy UE4SS version (HostBrain) freezes the AI squad when it is installed next to the Mods-menu version: its
   native guards load even when it leaves the mission to the pak. Turn it off or uninstall it.
 - **A native look:**

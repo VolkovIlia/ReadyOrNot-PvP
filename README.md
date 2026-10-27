@@ -34,8 +34,8 @@ and lacks the features of 0.3.0 and later.
   best player.
 - **Russian or English:** the game's language at first, a switch in the menu.
 - **Two rule sets**, picked by the host in the menu:
-  - **vanilla**: the AI keep the armour and guns the mission gives them; a suspect player gets the player version of
-    the AI's own guns (a pistol only, if the AI had only a pistol);
+  - **vanilla**: the AI keep the armour and guns the mission gives them; a suspect player takes over the whole kit
+    of the AI suspect he replaces: the player versions of its guns with its ammo and magazines, and its armour;
   - **balanced**: suspect players always get a rifle firing FMJ, and the AI SWAT squad wears a SWAT player's default
     Kevlar instead of its ceramic and steel plates.
 - **Suspect players** spawn in place of AI suspects, with suspect weapons and clothes, without armour or SWAT gear.
