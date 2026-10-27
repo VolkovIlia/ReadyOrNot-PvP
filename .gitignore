@@ -33,3 +33,6 @@ tools/bin/
 *.swp
 Thumbs.db
 .DS_Store
+
+# Release archives (tools/package_release.ps1)
+dist/

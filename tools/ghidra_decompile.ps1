@@ -10,9 +10,9 @@
 param(
     [Parameter(Mandatory = $true)][string]$Out,
     [int]$Depth = 0,
-    [string]$GhidraDir = "C:\Users\iliav\Tools\ghidra_12.1.4_PUBLIC",
+    [string]$GhidraDir = (Join-Path $env:USERPROFILE "Tools\ghidra_12.1.4_PUBLIC"),
     [string]$JavaHome = "C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot",
-    [string]$WorkDir = "C:\Users\iliav\Tools\ron_re",
+    [string]$WorkDir = (Join-Path $env:USERPROFILE "Tools\ron_re"),
     [string]$Binary = "C:\Program Files (x86)\Steam\steamapps\common\Ready Or Not\ReadyOrNot\Binaries\Win64\ReadyOrNotSteam-Win64-Shipping.exe",
     [string]$Project = "RoN",
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$Targets

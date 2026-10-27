@@ -4,12 +4,12 @@
 Если находка получена через REA, рядом указывается Evidence ID.
 
 ## Инструменты
-- **REA** (`npx rea-agents@6.8.0`) с провайдером Ghidra: `GHIDRA_INSTALL_DIR=C:\Users\iliav\Tools\ghidra_12.1.4_PUBLIC`,
+- **REA** (`npx rea-agents@6.8.0`) с провайдером Ghidra: `GHIDRA_INSTALL_DIR=%USERPROFILE%\Tools\ghidra_12.1.4_PUBLIC`,
   `JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot` (заданы в пользовательских переменных Windows;
   MCP-сервер увидит их после перезапуска клиента). `rea doctor --client claude_code` — Ghidra healthy.
 - **Точечная декомпиляция без полного автоанализа** (полный анализ exe на 150 МБ занимает часы):
-  `pwsh -File tools/ghidra_decompile.ps1 -Out C:\Users\iliav\Tools\ron_re\out -Depth 1 0x1449a06e0 dis:0x142a52df0:12`.
-  Проект Ghidra и копия exe живут в `C:\Users\iliav\Tools\ron_re` (лаунчер Ghidra не переносит пробелы и скобки в путях).
+  `pwsh -File tools/ghidra_decompile.ps1 -Out %USERPROFILE%\Tools\ron_re\out -Depth 1 0x1449a06e0 dis:0x142a52df0:12`.
+  Проект Ghidra и копия exe живут в `%USERPROFILE%\Tools\ron_re` (лаунчер Ghidra не переносит пробелы и скобки в путях).
 - **Откуда брать адреса:** `.pdata` (границы функций), поле `func` у UFunction в JMAP (exec-обёртки),
   слоты vtable из поля `vtable` у CDO в JMAP (реализации `_Implementation`), `re/annotate_strings.py` подставляет строки.
 

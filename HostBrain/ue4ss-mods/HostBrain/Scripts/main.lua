@@ -43,7 +43,9 @@
 
 local UEHelpers = require("UEHelpers")
 
-local ModDir = (debug.getinfo(1, "S").source:gsub("^@", ""):gsub("[\\/]Scripts[\\/]main%.lua$", ""))
+local Version = "0.1.0-alpha" -- the release this script ships in (CHANGELOG.md); bug reports quote it from the log
+
+local ModDir =(debug.getinfo(1, "S").source:gsub("^@", ""):gsub("[\\/]Scripts[\\/]main%.lua$", ""))
 local NativeDir = ModDir .. "\\native"
 local NativeDll = NativeDir .. "\\RonCompNative.dll"
 local NativeIni = NativeDir .. "\\RonCompNative.ini"
@@ -337,6 +339,7 @@ end
 local function Status(out)
     local gameMode = UEHelpers.GetGameModeBase()
     local gameState = UEHelpers.GetGameStateBase()
+    out("HostBrain " .. Version)
     out(string.format("world: %s", Valid(UEHelpers.GetWorld()) and UEHelpers.GetWorld():GetFullName() or "<none>"))
     out(string.format("game mode: %s", Valid(gameMode) and gameMode:GetClass():GetFName():ToString() or "<not host>"))
     if Valid(gameState) then
@@ -459,4 +462,4 @@ LoopInGameThreadAfterFrames(1, function()
     if not ok then Log("pvp frame tick failed: %s", tostring(err)) end
 end)
 
-Log("loaded; commands: comp_start <map> [mode], comp_pvp <map|here>, comp_play_suspect [map], comp_status")
+Log("%s loaded; commands: comp_start <map> [mode], comp_pvp <map|here>, comp_play_suspect [map], comp_status", Version)

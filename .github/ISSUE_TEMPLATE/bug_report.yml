@@ -1,0 +1,55 @@
+name: Ошибка / Bug report
+description: Что-то работает не так или игра вылетела / Something is broken or the game crashed
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо, что сообщаете об ошибке — мод в альфе, и каждый отчёт помогает.
+        Thanks for reporting — the mod is in alpha and every report helps.
+  - type: input
+    id: version
+    attributes:
+      label: Версия мода / Mod version
+      description: Строка `[HostBrain] ... loaded` в UE4SS.log или имя архива / the `[HostBrain] ... loaded` line in UE4SS.log or the archive name
+      placeholder: 0.1.0-alpha
+    validations:
+      required: true
+  - type: dropdown
+    id: role
+    attributes:
+      label: Кто вы в игре / Your role
+      options:
+        - Хост, играю один с ботами / Host, alone with bots
+        - Хост, с другими игроками / Host, with other players
+        - Клиент (без мода) / Client (no mod)
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: Что произошло / What happened
+      description: Что делали, что ожидали, что случилось. Карта, сторона, раунд. / What you did, expected and got. Map, side, round.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Как повторить / Steps to reproduce
+      placeholder: |
+        1. Кампус, «Слон», хост за подозреваемых, боты вкл.
+        2. ...
+  - type: textarea
+    id: logs
+    attributes:
+      label: Логи хоста / Host logs
+      description: |
+        Перетащите сюда файлы с компьютера хоста / Drag the host's files here:
+        `<игра/game>\ReadyOrNot\Binaries\Win64\ue4ss\UE4SS.log`
+        `<игра/game>\ReadyOrNot\Binaries\Win64\ue4ss\Mods\HostBrain\native\RonCompNative.log`
+        Скриншоты тоже помогают / Screenshots help too.
+  - type: input
+    id: game
+    attributes:
+      label: Версия игры / Game version
+      description: Если знаете (главное меню, внизу) / If you know it (main menu, bottom)
