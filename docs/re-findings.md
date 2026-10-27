@@ -776,6 +776,29 @@ Findings (reflection, checks in the game through RonCompProbe, Gas station, pak)
 - Officers beyond the host's pick leave the squad lists and are destroyed 2 s after the squad appears; sizing it
   earlier missed officers the mission had not spawned yet.
 
+## Why the AI squad stands still against suspect players (27.10.2026)
+
+Report: playing a suspect on Penthouse (0.4.0), the AI SWAT squad stays at its start for minutes. Checked with
+RonCompProbe (squad positions every 5–10 s, the officers' activities), Penthouse, single player:
+- **HostBrain's native guards freeze the squad.** With `Mods/HostBrain` enabled (the legacy UE4SS version loads
+  `RonCompNative.dll` even when it leaves the mission to the pak), a squad following its player leader in a plain
+  co-op mission does not move at all after the leader moves 10–55 m away. With HostBrain disabled the same squad
+  follows (18 → 12 m, 23 → 19 m in 15 s).
+- **An AI-led squad does not travel.** The mode makes an officer the squad leader when no SWAT player is alive.
+  Then, even in a plain co-op mission with no other change:
+  - `GiveMoveCommand(TT_SQUAD, far point)`: the point man's `MoveActivity` gets the real point and ends at once (no
+    path); the others get formation spots where they already stand. A 4 m order is carried out;
+  - `GiveSearchAndSecureCommand`: `SearchLandmark` / `SearchAndSecure` / `ArrestTarget` loops, 0–3 m per 10 s; one
+    officer that cannot reach a surrendered civilian holds the whole team;
+  - `GiveFallInCommand` on a hidden reserve officer (`SwatTrailers`) placed 18–55 m away as the leader: no movement;
+  - the suspect host as the leader: no movement (they do not follow an enemy).
+- Not the cause: door locks and closed doors (all doors opened, locks and door blockers off), the mode's door flags,
+  the fifth officer, scripted fire, known enemies (cleared), `GameState.RoundTimeRemaining`.
+- The engine's own path queries (`FindPathToLocationSynchronously`, `AIController.MoveToLocation`) fail for these
+  pawns even over 3 m: the officers move only through the game's activities.
+- **Team view:** `PlayerCharacter.CurrentViewCharacter` / `TryNextPlayerView` / `ClosePlayerView`; the list
+  (`GetAvaliablePlayersForTeamView`) holds every SWAT officer for a suspect while the hidden PvP flag is off.
+
 ## Lobby limit: 5 → 10 (26.10.2026)
 
 Observation (decompilation, checking the value in game):
