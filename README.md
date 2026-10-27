@@ -62,9 +62,10 @@ The mod needs nothing but the game: its logic is started by the game's own mod m
 
 ## Legacy: UE4SS installer
 
-Not developed since 0.2.1: no rule sets, doors or gun pickup. It filters suspects' radio reports and yells, hides
-mission score popups and limits spectating to one's own team, which the Mods-menu version cannot do. If both are
-installed, the installer version leaves the mission to the Mods-menu version.
+Not developed since 0.2.1: no rule sets, doors or gun pickup. It filters suspects' radio reports and yells and limits
+spectating to one's own team, which the Mods-menu version cannot do. If both are installed, the installer version
+leaves the mission to the Mods-menu version, **but its native code still loads and freezes the AI SWAT squad**: with
+the Mods-menu version, uninstall it (or delete `Mods\HostBrain\enabled.txt`).
 
 <details>
 <summary>Install with the installer</summary>
@@ -139,6 +140,13 @@ together with the AI suspects against the AI SWAT squad, and after the side swap
   their own team until the round ends.
 - **Bots.** A co-op mission spawns four AI officers (King, Swan, Prescott, Eli); the mod adds a fifth (Gideon) when
   five slots are free, and takes away the ones the host removed from the slots.
+  - With a SWAT player alive, the bots follow and obey that player as in co-op.
+  - With no SWAT player, they hunt. The game's AI does not take a squad led by a bot far, so the squad moves
+    unseen: while no suspect player can see it and it is not fighting, it hops every 12 s to a doorway up to 16 m
+    closer to the last sighting, gunshot or hint (a rough area around a suspect player every 30 s). It never lands
+    within 9 m of a suspect player or in their sight, walks the last metres and fights on its own.
+- **No cheating views:** a suspect cannot open SWAT helmet cameras and gets no SWAT score or objective popups (for
+  a client this needs the mod).
 - **Doors.** Suspects open any door, locked ones too (the game's own `Door.bSuspectAlwaysUnlocks` rule). A door
   that was locked locks again when a suspect closes it; SWAT still have to pick, breach or kick it.
 - **Dropped guns.** A suspect who collects a dropped gun as evidence (holds the use key on it) gets the gun instead:
@@ -172,8 +180,9 @@ Settings are saved in `Mods\HostBrain\settings.txt`.
 - A client sees the Tab scoreboard only with the mod installed; without it, a client gets the round events and the
   kill feed in chat.
 - Chat lines from the mod (kill feed, round events for clients) are in the host's language.
-- Suspect players can still use SWAT radio reports and yells, mission score popups still show and dead players may
-  spectate anyone: blocking that needs native code, which a Mods-menu mod cannot load.
+- Suspect players can still use SWAT radio reports and yells, and dead players may spectate anyone: blocking that
+  needs native code, which a Mods-menu mod cannot load.
+- A client without the mod still sees SWAT score popups and can open SWAT helmet cameras as a suspect.
 - Suspects on clients still see the SWAT squad panel: it cannot be hidden on a vanilla client.
 - A suspect's own radio report animation and voice still play, but the server does not accept the report.
 - If all players die in a round, the standard debriefing screen may flash for a second before the next round loads.

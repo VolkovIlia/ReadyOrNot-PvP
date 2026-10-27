@@ -31,8 +31,17 @@ SAFE_DISTANCE = 1000.0
 BREAK_SECONDS = 6.0
 READY_AFTER = 8.0
 HEAR_RANGE = 4000.0
-HINT_AFTER = 60.0
-HINT_SPREAD = 1500.0
+HINT_AFTER = 30.0
+HINT_SPREAD = 800.0
+# an AI-led squad carries out only short orders, so it closes in by hops while no suspect player sees it: to a
+# doorway within HOP_RANGE (twice that when none is found) every HOP_EVERY s, never within HOP_KEEP of a suspect
+# player; then it walks in CREEP_STEP orders; after contact it stays put for HOP_PAUSE s
+HOP_EVERY = 12.0
+HOP_RANGE = 1600.0
+HOP_KEEP = 900.0
+HOP_PAUSE = 15.0
+CREEP_EVERY = 6.0
+CREEP_STEP = 400.0
 SLOTS = 5
 MAX_ROWS = 8
 # a co-op mission spawns four AI officers; the fifth is spawned by the mode
@@ -59,6 +68,9 @@ STYLE_YELLOW = 8
 W_PreMission = "/Game/Blueprints/Widgets/PreMission/W_PreMission.W_PreMission_C"
 W_StandardButton = "/Game/Blueprints/Widgets/Common/W_StandardButton.W_StandardButton_C"
 W_HumanCharacter_HUD = "/Game/Blueprints/Widgets/HUD/W_HumanCharacter_HUD_V2.W_HumanCharacter_HUD_V2_C"
+# the HUD's popups: mission score ("+10") and objectives (the mode's own popups are objective popups too)
+W_ScoreNotify = "/Game/Blueprints/Widgets/HUD/W_ScoreNotify.W_ScoreNotify_C"
+W_ObjectiveNotify = "/Game/Blueprints/Widgets/HUD/W_ObjectiveNotify.W_ObjectiveNotify_C"
 # the game's scoreboard parts (its PvP modes): the blurred panel, the column titles and fonts, a player's line
 W_Scoreboard = "/Game/Blueprints/Widgets/Common/W_Scoreboard.W_Scoreboard_C"
 W_ScoreboardFill = "/Game/Blueprints/Widgets/Common/W_ScoreboardFill.W_ScoreboardFill_C"
@@ -202,19 +214,19 @@ class PvPDirector(Actor):
     BoardAt: float
     Banners: List[str]
     BannerAfter: float
+    OwnPopups: List[str]
     # squad hunt
     HuntTargets: List[Actor]
     HuntContact: Vector
     HuntContactAt: float
     HuntContactSource: str
     HuntContactId: int
-    HuntOrderedId: int
-    HuntOrdered: Vector
-    HuntLastOrder: float
     HuntLastHint: float
-    HuntSearching: bool
     HuntShot: Vector
     HuntHasShot: bool
+    HopDoors: List[Door]
+    HopAt: float
+    HopQuietUntil: float
     # menu
     Screen: W_PreMission_C
     Page: Border
@@ -515,8 +527,7 @@ class PvPDirector(Actor):
         HUD is up and the mission has faded in, popups wait (HudTick shows them)."""
         hud = self.Hud()
         if hud and self.Now() >= self.BannerAfter:
-            popup: Text = Text(ToUpper(text))
-            hud.AddObjectivePopup(popup)
+            self.Popup(hud, text)
         else:
             self.Banners.append(text)
 
@@ -527,9 +538,32 @@ class PvPDirector(Actor):
         if not hud:
             return
         for text in self.Banners:
-            popup: Text = Text(ToUpper(text))
-            hud.AddObjectivePopup(popup)
+            self.Popup(hud, text)
         self.Banners.clear()
+
+    def Popup(self, hud: W_HumanCharacter_HUD_V2_C, text: str):
+        """An objective popup the mode itself shows (HideSwatPopups keeps these for a suspect)."""
+        line = ToUpper(text)
+        if len(self.OwnPopups) > 20:
+            self.OwnPopups.remove_at(0)
+        self.OwnPopups.append(line)
+        popup: Text = Text(line)
+        hud.AddObjectivePopup(popup)
+
+    def HideSwatPopups(self, pc: ReadyOrNotPlayerController):
+        """A suspect gets no SWAT mission score or objective popups: a co-op mission gives them to every player, and
+        only the game's hidden PvP flag (kept off by the mode) would stop it. They are collapsed as soon as they
+        show; the mode's own popups stay. Local to the player's machine: a client needs the pak for this."""
+        state = cast(pc.PlayerState, ReadyOrNotPlayerState)
+        if not state or state.Team != SUSPECT:
+            return
+        for widget in GetAllWidgetsOfClass(W_ScoreNotify_C, False):
+            if widget.GetVisibility() != COLLAPSED:
+                widget.SetVisibility(COLLAPSED)
+        for widget in GetAllWidgetsOfClass(W_ObjectiveNotify_C, False):
+            notify = cast(widget, W_ObjectiveNotify_C)
+            if notify and notify.GetVisibility() != COLLAPSED and not (Conv_TextToString(notify.ObjectiveText) in self.OwnPopups):
+                notify.SetVisibility(COLLAPSED)
 
     def HideSquadHud(self):
         hud = self.Hud()
@@ -1009,6 +1043,7 @@ class PvPDirector(Actor):
                 if door:
                     door.bSuspectAlwaysUnlocks = True
                     door.bSuspectKnowsLockState = False
+                    self.HopDoors.append(door)
                     if door.IsLocked():
                         self.LockedDoors.append(door)
             self.Log(f"doors: suspects open all of them, {len(self.LockedDoors)} locked")
@@ -1427,12 +1462,12 @@ class PvPDirector(Actor):
     def HuntReset(self, now: float):
         self.HuntTargets.clear()
         self.HuntContactId = 0
-        self.HuntOrderedId = 0
         self.HuntHasShot = False
-        self.HuntLastOrder = now
-        self.HuntLastHint = now
+        # the first hint 10 s into the round when nobody was seen; the first hop once the squad is there
+        self.HuntLastHint = now - HINT_AFTER + 10.0
         self.HuntContactAt = -1000.0
-        self.HuntSearching = False
+        self.HopAt = now + 8.0
+        self.HopQuietUntil = 0.0
 
     def Nearest(self, targets: List[ReadyOrNotCharacter], start: Vector) -> ReadyOrNotCharacter:
         best = targets[0]
@@ -1446,8 +1481,10 @@ class PvPDirector(Actor):
 
     def HuntDirect(self, now: float, targets: List[ReadyOrNotCharacter], swat: List[ReadyOrNotCharacter]):
         """One step of the hunt: the squad learns where the suspect players are only by seeing them or
-        hearing their shots; without contact it clears rooms, and after HINT_AFTER seconds of silence it
-        gets a rough area around one of them."""
+        hearing their shots, and after HINT_AFTER seconds of silence it gets a rough area around one of them.
+        An AI-led squad does not travel on orders (it carries out moves of a few metres only), so while no
+        suspect player can see it, it hops from doorway to doorway toward that spot and walks the last metres;
+        in contact its own combat AI and the fire director take over."""
         manager = self.SquadManager()
         if not manager or len(targets) == 0 or len(swat) == 0:
             return
@@ -1493,25 +1530,129 @@ class PvPDirector(Actor):
             self.HuntContactId += 1
             self.HuntLastHint = now
         if seen:
-            return  # in contact: the fire director handles it
-        if self.HuntContactId != self.HuntOrderedId:
-            manager.GiveMoveCommand(SQUAD, self.HuntContact)
-            self.Log("squad: moving to the last " + self.HuntContactSource)
-            self.HuntOrderedId = self.HuntContactId
-            self.HuntOrdered = self.HuntContact
-            self.HuntLastOrder = now
-            self.HuntSearching = False
-        elif not self.HuntSearching:
-            target = leader_at
-            far = True
-            if self.HuntOrderedId > 0:
-                target = self.HuntOrdered
-                far = Vector_Distance(leader_at, target) >= 600.0
-            if self.HuntOrderedId == 0 or not far or now - self.HuntLastOrder >= 45.0:
-                manager.GiveSearchAndSecureCommand(SQUAD, target, False)
-                self.Log("squad: search and secure")
-                self.HuntSearching = True
-                self.HuntLastOrder = now
+            # in contact: the combat AI and the fire director take it; no hop for a while
+            self.HopQuietUntil = now + HOP_PAUSE
+            return
+        if self.Spotted(targets, swat) or self.InFight(swat):
+            # never a hop in front of a suspect player or out of a fight
+            self.HopQuietUntil = max(self.HopQuietUntil, now + 3.0)
+            return
+        if now < self.HopQuietUntil or now < self.HopAt or self.HuntContactId == 0:
+            return
+        goal = self.HuntContact
+        if self.Hop(manager, swat, targets, leader_at, goal, HOP_RANGE) or self.Hop(manager, swat, targets, leader_at, goal, HOP_RANGE * 2.0):
+            self.HopAt = now + HOP_EVERY
+            return
+        self.Creep(manager, leader_at, goal)
+        self.HopAt = now + CREEP_EVERY
+
+    def HuntDistance(self, a: Vector, b: Vector) -> float:
+        """A distance with the height counted twice: a spot on the suspects' floor is nearer than one above them."""
+        dz = (a.Z - b.Z) * 2.0
+        return Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y) + dz * dz)
+
+    def Spotted(self, targets: List[ReadyOrNotCharacter], swat: List[ReadyOrNotCharacter]) -> bool:
+        """A suspect player has a line of sight to an officer within 40 m."""
+        for pawn in targets:
+            eye = pawn.K2_GetActorLocation()
+            for ai in swat:
+                at = ai.K2_GetActorLocation()
+                if Vector_Distance(eye, at) < 4000.0:
+                    ignore: List[Actor] = [pawn, ai]
+                    if not self.Blocked(Vector(X=eye.X, Y=eye.Y, Z=eye.Z + 60.0), Vector(X=at.X, Y=at.Y, Z=at.Z + 60.0), ignore):
+                        return True
+        return False
+
+    def HiddenFrom(self, spot: Vector, targets: List[ReadyOrNotCharacter]) -> bool:
+        """No suspect player is within HOP_KEEP of a spot or can see it."""
+        for pawn in targets:
+            eye = pawn.K2_GetActorLocation()
+            if Vector_Distance(eye, spot) < HOP_KEEP:
+                return False
+            ignore: List[Actor] = [pawn]
+            if not self.Blocked(Vector(X=eye.X, Y=eye.Y, Z=eye.Z + 60.0), Vector(X=spot.X, Y=spot.Y, Z=spot.Z + 60.0), ignore):
+                return False
+        return True
+
+    def Hop(self, manager: SWATManager, swat: List[ReadyOrNotCharacter], targets: List[ReadyOrNotCharacter], leader_at: Vector,
+            goal: Vector, reach: float) -> bool:
+        """The squad moves unseen to the doorway nearest the goal within reach of its leader that brings it at least
+        3 m closer and that no suspect player can see or is near."""
+        best = self.HuntDistance(leader_at, goal) - 300.0
+        spot = Vector(X=0.0, Y=0.0, Z=0.0)
+        found = False
+        for door in self.HopDoors:
+            if not IsValid(door):
+                continue
+            at = door.K2_GetActorLocation()
+            candidate = Vector(X=at.X, Y=at.Y, Z=at.Z + 100.0)
+            distance = self.HuntDistance(candidate, goal)
+            if distance < best and Vector_Distance(candidate, leader_at) <= reach and self.HiddenFrom(candidate, targets):
+                best = distance
+                spot = candidate
+                found = True
+        if not found:
+            return False
+        placed = self.PlaceSquad(swat, spot, goal, targets)
+        if placed == 0:
+            return False
+        manager.GiveMoveCommand(SQUAD, spot)
+        self.Log(f"squad: hop {int(Vector_Distance(leader_at, spot) / 100.0)} m, now {int(Vector_Distance(spot, goal) / 100.0)} m from the {self.HuntContactSource} ({placed} officers)")
+        return True
+
+    def PlaceSquad(self, swat: List[ReadyOrNotCharacter], center: Vector, goal: Vector, targets: List[ReadyOrNotCharacter]) -> int:
+        """The whole squad around the doorway or nobody: spots on rings of 12 directions up to 4 m with a floor under
+        them, in sight of the doorway and hidden from the suspect players; with enough of them every officer takes
+        the first one K2_TeleportTo accepts (it refuses spots where the capsule would be stuck), facing the goal."""
+        crowd: List[Actor] = []
+        for ai in swat:
+            crowd.append(ai)
+        spots: List[Vector] = []
+        taken: List[bool] = []
+        yaw = FindLookAtRotation(center, goal).Yaw
+        for distance in [0.0, 100.0, 170.0, 240.0, 320.0, 400.0]:
+            for step in range(12):
+                angle = yaw + step * 30.0
+                spot = Vector(X=center.X + DegCos(angle) * distance, Y=center.Y + DegSin(angle) * distance, Z=center.Z)
+                free = True
+                for other in spots:
+                    if Vector_Distance(other, spot) < 80.0:
+                        free = False
+                if free and self.Blocked(spot, Vector(X=spot.X, Y=spot.Y, Z=spot.Z - 250.0), crowd) \
+                        and (distance == 0.0 or not self.Blocked(center, spot, crowd)) and self.HiddenFrom(spot, targets):
+                    spots.append(spot)
+                    taken.append(False)
+        if len(spots) < len(swat):
+            return 0
+        placed = 0
+        for ai in swat:
+            for i in range(len(spots)):
+                if not taken[i] and ai.K2_TeleportTo(spots[i], Rotator(Pitch=0.0, Yaw=yaw, Roll=0.0)):
+                    taken[i] = True
+                    placed += 1
+                    break
+        return placed
+
+    def InFight(self, swat: List[ReadyOrNotCharacter]) -> bool:
+        """An officer is tracking a living enemy (an AI suspect too): the squad does not hop out of a fight."""
+        for ai in swat:
+            controller = cast(ai.Controller, CyberneticController)
+            if controller:
+                enemy = controller.TargetingComponent.TrackedTarget
+                if enemy and not self.IsDown(enemy):
+                    return True
+        return False
+
+    def Creep(self, manager: SWATManager, leader_at: Vector, goal: Vector):
+        """Where no hop gets the squad closer it walks: orders of a few metres are the ones an AI-led squad carries
+        out."""
+        dx = goal.X - leader_at.X
+        dy = goal.Y - leader_at.Y
+        length = Sqrt(dx * dx + dy * dy)
+        if length < 150.0:
+            return
+        step = min(CREEP_STEP, length)
+        manager.GiveMoveCommand(SQUAD, Vector(X=leader_at.X + dx / length * step, Y=leader_at.Y + dy / length * step, Z=leader_at.Z))
 
     def OnWeaponFire(self, Weapon: BaseMagazineWeapon, bServer: bool):
         owner = Weapon.GetOwner()
@@ -2497,6 +2638,7 @@ class PvPDirector(Actor):
         if self.Server:
             self.ShowBanners()
         self.BlockSwatCameras(pc)
+        self.HideSwatPopups(pc)
         want = self.BoardForced
         if not want and pc.IsInputKeyDown(Key(KeyName="Tab")):
             want = self.InMatch()

@@ -798,6 +798,16 @@ RonCompProbe (squad positions every 5–10 s, the officers' activities), Penthou
   pawns even over 3 m: the officers move only through the game's activities.
 - **Team view:** `PlayerCharacter.CurrentViewCharacter` / `TryNextPlayerView` / `ClosePlayerView`; the list
   (`GetAvaliablePlayersForTeamView`) holds every SWAT officer for a suspect while the hidden PvP flag is off.
+- **HUD popups:** mission score popups are `W_ScoreNotify_C`, objective popups `W_ObjectiveNotify_C`
+  (`ObjectiveText`), both inside `W_HumanCharacter_HUD_V2_C`; collapsing them right after they appear hides them.
+
+Result (0.4.0-alpha): with no SWAT player the squad hops (`PvPDirector.Hop`): while no suspect player has a line of
+sight to an officer and no officer tracks a living enemy, every 12 s the whole squad is teleported to the doorway
+(one of the mission's `Door` actors) nearest the hunt's goal within 16 m (32 m when none), at least 3 m closer
+(height counted twice), not within 9 m of a suspect player and not in their sight; spots on rings around the doorway
+with a floor, in sight of the doorway and hidden, all of them or none. Then a short move order (4 m steps when no
+hop gets closer). Checked on Penthouse: the squad closed in from 25 m to the host in one hop of 5 officers, fought
+the AI suspects and the host.
 
 ## Lobby limit: 5 → 10 (26.10.2026)
 

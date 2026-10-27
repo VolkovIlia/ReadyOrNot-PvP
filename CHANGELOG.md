@@ -26,6 +26,15 @@
 - **Spawn protection.** A suspect player who takes over an AI suspect cannot be hurt for 3 s.
 - **No SWAT helmet cameras for suspects.** The game's team view lists every SWAT officer while its hidden PvP flag
   is off, so a suspect could watch where SWAT were; the mode closes such a view at once (a client needs the pak).
+- **No SWAT score or objective popups for suspects** ("Reported suspect", "+10", mission objectives): they are hidden
+  as soon as they show; the mode's own popups stay (a client needs the pak).
+- **SWAT bots hunt again.** With no SWAT player the squad is led by a bot, and the game's AI then carries out only
+  orders of a few metres, so the bots stood at their start. Now, while no suspect player can see the squad and it
+  is not fighting, it hops every 12 s to a doorway up to 16 m closer to the last sighting, gunshot or hint (never
+  within 9 m of a suspect player or in sight of one), walks the last metres and fights on its own on contact.
+  Hints come every 30 s and are closer (±8 m).
+- The legacy UE4SS version (HostBrain) freezes the AI squad when it is installed next to the Mods-menu version: its
+  native guards load even when it leaves the mission to the pak. Turn it off or uninstall it.
 - **A native look:**
   - round events show for the host as the game's own objective popups at the bottom centre: round start, result,
     side swap, time warnings, takeover, pickup;

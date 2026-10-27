@@ -56,9 +56,13 @@ HOW TO PLAY
 3. In a round hold Tab for the scoreboard.
 
 KNOWN LIMITS
-- Suspect players can still use SWAT radio reports and yells, mission score popups still show and dead players
-  may spectate anyone: blocking those needs native code, which a Mods-menu mod cannot load.
-- A friend sees the Tab scoreboard only with the mod subscribed.
+- Suspect players can still use SWAT radio reports and yells, and dead players may spectate anyone: blocking
+  those needs native code, which a Mods-menu mod cannot load.
+- A friend gets the Tab scoreboard, and as a suspect no SWAT helmet cameras or score popups, only with the mod
+  subscribed.
+- With no SWAT player the bots close in by unseen hops from doorway to doorway (the game's AI does not take a
+  bot-led squad far).
+- Uninstall the old UE4SS version of this mod if you have it: it freezes the AI squad.
 - Little tested with live opponents yet.
 
 Open source (MIT): https://github.com/VolkovIlia/ReadyOrNot-PvP
