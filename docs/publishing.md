@@ -16,7 +16,8 @@ be passed to the Vue component, otherwise "Create mod" answers "Field is require
 
 - **Name:** PvP - SWAT vs Suspects (Alpha)
 - **Logo:** `assets/pvp-cover.png`
-- **Gallery:** `assets/screenshots/*.jpg` (team menu, Tab scoreboard, round end with the kill feed, round results)
+- **Gallery:** `assets/screenshots/*.jpg` in file order (team menu, Tab scoreboard, round end with the kill feed, round
+  results, round start)
 - **File:** `dist/RoNPvP-<version>-modio.zip`, version `<version>`
 - **Tags:** Gameplay, AI
 - **Summary:**
