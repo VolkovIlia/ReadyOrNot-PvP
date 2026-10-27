@@ -35,6 +35,7 @@ class Expr:
     def __init__(self, json, type, lvalue=False, prop=None):
         self.json, self.type, self.lvalue = json, type, lvalue
         self.prop = prop  # property pointer of the variable it reads (EX_Context r-value, EX_Let)
+        self.literal = None  # the Python value of a constant
 
 
 class Var:
