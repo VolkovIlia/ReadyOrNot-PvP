@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.4.0-alpha — 27.10.2026
+
+- **Scoreboard on Tab** during a PvP round, over the mission journal:
+  - the round, the score and the time left;
+  - every player's kills, deaths, status and ping, in the game's own scoreboard lines;
+  - the AI officers and how many AI suspects are left.
+
+  A client with the pak gets it too, drawn from replicated state.
+- **Match stats:**
+  - a kill feed in chat, marked the way the game marks its own: "King killed w4me (Superbnova)". It shows kills
+    that involve a player or cost SWAT an officer;
+  - the players' kills and deaths for the match and the round, written into their PlayerState, so the game's
+    scoreboard lines show them;
+  - a table (player, kills, deaths) and the best player on the round and match result pages.
+- **Bot slots:**
+  - the SWAT card has five slots: a click on a bot takes it away, a click on a free slot adds one;
+  - with the host on the suspects' side SWAT get five bots. The mod spawns a fifth officer (Gideon) next to the
+    mission's four (King, Swan, Prescott, Eli), with the first officer's kit and clothes;
+  - the «БОТЫ SWAT» on/off button is gone.
+- **English.** The menu, the messages and the scoreboard are in Russian or English:
+  - on the first start the mode takes the game's language;
+  - «ЯЗЫК / LANGUAGE» in the menu switches it;
+  - a client's scoreboard follows the client's own game language.
+- **Spawn protection.** A suspect player who takes over an AI suspect cannot be hurt for 3 s.
+- **A native look:**
+  - round events show for the host as the game's own objective popups at the bottom centre: round start, result,
+    side swap, time warnings, takeover, pickup;
+  - clients get these events as short chat lines;
+  - the long rules text is no longer repeated in chat: it is in the menu;
+  - the mode no longer posts toasts;
+  - the menu uses the game's font (Barlow, as on the pre-mission screen) and darker, neutral panels.
+
 ## 0.3.0-alpha — 27.10.2026
 
 The Mods-menu version (mod.io) is now the mod; the UE4SS installer version stays at 0.2.1 and is not developed further.

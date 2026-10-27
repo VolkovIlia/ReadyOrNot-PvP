@@ -16,12 +16,13 @@ be passed to the Vue component, otherwise "Create mod" answers "Field is require
 
 - **Name:** PvP - SWAT vs Suspects (Alpha)
 - **Logo:** `assets/pvp-cover.png`
+- **Gallery:** `assets/screenshots/*.jpg` (team menu, Tab scoreboard, round end with the kill feed, round results)
 - **File:** `dist/RoNPvP-<version>-modio.zip`, version `<version>`
 - **Tags:** Gameplay, AI
 - **Summary:**
-  ALPHA. Any co-op mission becomes PvP: SWAT players vs suspect players. Team menu, rounds, halftime side swap.
-  Dead suspects take over AI suspects. Optional AI SWAT bots. Host installs it; friends enable "Join modded
-  servers". Bugs: GitHub. (mod.io limit: 250 characters)
+  ALPHA. Any co-op mission becomes PvP: SWAT players vs suspect players. Team menu, rounds, side swap, Tab
+  scoreboard, kill feed. Dead suspects take over AI suspects. Up to 5 SWAT bots. EN/RU. Friends enable "Join
+  modded servers". (mod.io limit: 250 characters)
 - **Description:**
 
 ```
@@ -30,29 +31,34 @@ ALPHA VERSION - expect bugs. Please report them on GitHub: https://github.com/Vo
 
 Turns any Ready or Not co-op mission into PvP: SWAT players against suspect players.
 
-- Team menu on the host's pre-mission screen: team cards, bots, match settings, Ready.
+- Team menu on the host's pre-mission screen: team cards, bot slots, match settings, Ready.
   Other players pick a side in chat: !swat or !suspect.
 - Rounds: a match to N wins (default 3), round and match result screens instead of the SWAT debriefing,
   halftime side swap, the next round starts by itself.
+- Scoreboard on Tab in the game's own style: round, score, time left, every player's kills, deaths, status and
+  ping, the AI officers and the AI suspects left.
+- Match stats: a kill feed in chat, kills and deaths on the result pages, the best player.
 - Suspect players spawn in an AI suspect's place with suspect guns and clothes, no armour or SWAT gear,
-  and after a death take over another living AI suspect.
+  and after a death take over another living AI suspect (3 s of spawn protection).
 - Two rule sets in the host's menu: vanilla (the AI keep the guns and armour the mission gives them, a suspect
   player gets the AI's own guns) or balanced (rifles for suspect players, Kevlar for the AI SWAT squad).
 - Suspects open any door, locked ones too; SWAT still find locked doors locked.
 - Suspects pick up dropped guns: hold the evidence-collect key on a gun.
-- Optional AI SWAT squad: fights for SWAT and hunts suspects on its own when no SWAT player is alive.
-  You can play alone against bots on either side.
+- Up to five AI SWAT bots fill the free SWAT slots: they fight for SWAT and hunt suspects on their own when no
+  SWAT player is alive. You can play alone against bots on either side.
+- English and Russian: the game's language at first, a switch in the menu.
 - 10-player lobbies (5v5).
 
 HOW TO PLAY
 1. Host: subscribe and restart the game. Friends: subscribe too, or turn on Settings > Game >
    "Join modded servers" once (the game hides modded lobbies otherwise).
 2. Host a lobby and start any co-op mission: the team menu opens on the pre-mission screen.
+3. In a round hold Tab for the scoreboard.
 
 KNOWN LIMITS
-- The menu and messages are in Russian for now.
 - Suspect players can still use SWAT radio reports and yells, mission score popups still show and dead players
   may spectate anyone: blocking those needs native code, which a Mods-menu mod cannot load.
+- A friend sees the Tab scoreboard only with the mod subscribed.
 - Little tested with live opponents yet.
 
 Open source (MIT): https://github.com/VolkovIlia/ReadyOrNot-PvP

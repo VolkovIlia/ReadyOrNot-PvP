@@ -3,7 +3,8 @@
 # The mod.io version of HostBrain's hb_pvp.lua (and hb_menu, hb_loadout, hb_hunt), written for kc.lang:
 # compiled by pakmod/kc/lang.py into Blueprint classes, never run by Python. The director actor is spawned
 # on every map by ModActorSpawnData (docs/modio-pak-research.md); its logic runs on the host only
-# (KismetSystemLibrary.IsServer), so only the host needs the pak.
+# (KismetSystemLibrary.IsServer), so only the host needs the pak. A client with the pak only draws its own
+# scoreboard on Tab from replicated state.
 #
 # Differences from the UE4SS version, which patched the game's code natively:
 #   * the hidden co-op PvP flag (CoopGS.bCrouchingTigerHiddenDragon) stays off: without the native team
@@ -23,7 +24,7 @@ RULES_BALANCED = 1
 EVIDENCE_COLLECTED = 1
 SQUAD = 5
 SLOT = "RoNPvP"
-VERSION = "0.3.0-alpha"
+VERSION = "0.4.0-alpha"
 COOP_MODE = "BS_COOP"
 RESPAWN_DELAY = 10.0
 SAFE_DISTANCE = 1000.0
@@ -34,10 +35,16 @@ HINT_AFTER = 60.0
 HINT_SPREAD = 1500.0
 SLOTS = 5
 MAX_ROWS = 8
+# a co-op mission spawns four AI officers; the fifth is spawned by the mode
+MAX_BOTS = 5
+# a suspect player who takes over an AI suspect cannot be hurt for a moment
+PROTECT_SECONDS = 3.0
+STAT_ROWS = 10
 
 # UMG enums
 VISIBLE = 0
 COLLAPSED = 1
+HIDDEN = 2
 SELF_HIT_TEST_INVISIBLE = 4
 ALIGN_LEFT = 1
 ALIGN_CENTER = 2
@@ -52,6 +59,10 @@ STYLE_YELLOW = 8
 W_PreMission = "/Game/Blueprints/Widgets/PreMission/W_PreMission.W_PreMission_C"
 W_StandardButton = "/Game/Blueprints/Widgets/Common/W_StandardButton.W_StandardButton_C"
 W_HumanCharacter_HUD = "/Game/Blueprints/Widgets/HUD/W_HumanCharacter_HUD_V2.W_HumanCharacter_HUD_V2_C"
+# the game's scoreboard parts (its PvP modes): the blurred panel, the column titles and fonts, a player's line
+W_Scoreboard = "/Game/Blueprints/Widgets/Common/W_Scoreboard.W_Scoreboard_C"
+W_ScoreboardFill = "/Game/Blueprints/Widgets/Common/W_ScoreboardFill.W_ScoreboardFill_C"
+W_Scoreboard_Line = "/Game/Blueprints/Widgets/Common/W_Scoreboard_Line.W_Scoreboard_Line_C"
 
 
 @blueprint("/Game/Mods/RoNPvP/BP_PvPSave")
@@ -64,6 +75,10 @@ class PvPSave(SaveGame):
     Swap: bool
     BotAccuracy: float
     Rules: int
+    # "ru" or "en"; empty in a save from before 0.4.0: the game's language decides
+    Lang: str
+    BotSlots: int
+    SlotsSaved: bool
 
 
 @blueprint("/Game/Mods/RoNPvP/BP_PvPLog")
@@ -83,6 +98,9 @@ class PvPState(Object):
     Swap: bool
     BotAccuracy: float
     Rules: int
+    Lang: str
+    # AI officers the host wants in the SWAT slots (the free slots after the SWAT players cap it)
+    BotSlots: int
     Active: bool
     AutoMatch: bool
     Phase: str
@@ -90,6 +108,11 @@ class PvPState(Object):
     ScoreSwat: int
     ScoreSuspects: int
     Teams: Map[str, int]
+    # players' kills and deaths by name: the match, the round being played
+    Kills: Map[str, int]
+    Deaths: Map[str, int]
+    RoundKills: Map[str, int]
+    RoundDeaths: Map[str, int]
     HasResult: bool
     ResultRound: int
     ResultSwatWon: bool
@@ -99,6 +122,12 @@ class PvPState(Object):
     ResultSwatScore: int
     ResultSuspectScore: int
     ResultWinners: str
+    # the result page's table: name, team, kills, deaths per row; the best player
+    ResultNames: List[str]
+    ResultTeams: List[int]
+    ResultKills: List[int]
+    ResultDeaths: List[int]
+    ResultMvp: str
     PageMode: str
     TravelAt: float
     Log: List[str]
@@ -113,6 +142,7 @@ class PvPDirector(Actor):
     Server: bool
     Coop: bool
     AutoArmed: bool
+    Russian: bool
     # this mission
     Suspects: Map[str, bool]
     ConvertAi: Map[str, SuspectCharacter]
@@ -150,6 +180,28 @@ class PvPDirector(Actor):
     Kevlar: ArmourMaterial
     GunPrimary: str
     GunSecondary: str
+    Protected: Map[ReadyOrNotCharacter, float]
+    # kills: everyone seen standing (with a name for the kill feed), the fallen
+    Alive: Map[ReadyOrNotCharacter, str]
+    Fallen: List[Actor]
+    TrackAt: float
+    BotsWanted: int
+    SquadSized: bool
+    SquadFirstAt: float
+    # the local HUD (every machine with the pak): the scoreboard on Tab
+    FontsReady: bool
+    FontPlain: SlateFontInfo
+    FontBold: SlateFontInfo
+    Board: W_Scoreboard_C
+    BoardTitle: TextBlock
+    BoardSwat: VerticalBox
+    BoardSuspects: VerticalBox
+    BoardShown: bool
+    BoardForced: bool
+    BoardKey: str
+    BoardAt: float
+    Banners: List[str]
+    BannerAfter: float
     # squad hunt
     HuntTargets: List[Actor]
     HuntContact: Vector
@@ -177,18 +229,21 @@ class PvPDirector(Actor):
     SwatTexts: List[TextBlock]
     SwatStatus: TextBlock
     SwatJoin: W_StandardButton_C
+    SwatTitle: TextBlock
+    SlotButtons: List[W_StandardButton_C]
     SuspectHeader: Border
     SuspectCount: TextBlock
     SuspectRows: List[Border]
     SuspectTexts: List[TextBlock]
     SuspectStatus: TextBlock
     SuspectJoin: W_StandardButton_C
-    BotsButton: W_StandardButton_C
+    SuspectTitle: TextBlock
     AccuracyButton: W_StandardButton_C
     MinutesButton: W_StandardButton_C
     RoundsButton: W_StandardButton_C
     SwapButton: W_StandardButton_C
     RulesButton: W_StandardButton_C
+    LangButton: W_StandardButton_C
     ReadyButton: W_StandardButton_C
     ResTop: TextBlock
     ResWinner: TextBlock
@@ -199,6 +254,11 @@ class PvPDirector(Actor):
     ResSuspectNumber: TextBlock
     ResNotice: TextBlock
     ResCountdown: TextBlock
+    ResMvp: TextBlock
+    StatRows: List[Widget]
+    StatNames: List[TextBlock]
+    StatKills: List[TextBlock]
+    StatDeaths: List[TextBlock]
     RoundButtons: List[Widget]
     NewMatchButton: Widget
     RowTexts: List[str]
@@ -208,7 +268,11 @@ class PvPDirector(Actor):
 
     def ReceiveBeginPlay(self):
         self.Server = IsServer(self)
+        # every machine with the pak draws its own scoreboard from replicated state; a client takes its own
+        # game's language, the rest of the mode runs on the host
+        K2_SetTimer(self, "HudTick", 0.1, True, 0.0, 0.0)
         if not self.Server:
+            self.Russian = StartsWith(KismetInternationalizationLibrary.GetCurrentLanguage(), "ru", 1)
             return
         self.SquadVariable = -1
         self.HostWait = -1.0
@@ -227,7 +291,8 @@ class PvPDirector(Actor):
             "Secondary_Flaregun": "Secondary_M1911_V2",
         }
         self.LoadState()
-        self.State.Log.append("---- " + VERSION + " · " + GetCurrentLevelName(True))
+        self.Russian = self.State.Lang == "ru"
+        self.State.Log.append("---- " + VERSION + " — " + GetCurrentLevelName(True))
         # 10 players (5v5) in lobbies created from now on; the game's default is 5
         if EOSMultiplayerStatics.GetMaxPlayers() < 10:
             EOSMultiplayerStatics.SetMaxPlayers(10)
@@ -266,6 +331,7 @@ class PvPDirector(Actor):
         st.RoundsToWin = 3
         st.Swap = True
         st.BotAccuracy = 2.0
+        st.BotSlots = MAX_BOTS
         st.Phase = "idle"
         st.PageMode = "teams"
         st.Round = 1
@@ -279,6 +345,15 @@ class PvPDirector(Actor):
                 st.Swap = save.Swap
                 st.BotAccuracy = save.BotAccuracy
                 st.Rules = save.Rules
+                st.Lang = save.Lang
+                if save.SlotsSaved:
+                    st.BotSlots = save.BotSlots
+                elif not save.Bots:
+                    st.BotSlots = 0
+        if st.Lang != "ru" and st.Lang != "en":
+            st.Lang = "ru" if StartsWith(KismetInternationalizationLibrary.GetCurrentLanguage(), "ru", 1) else "en"
+        if st.BotSlots < 0 or st.BotSlots > MAX_BOTS:
+            st.BotSlots = MAX_BOTS
         if st.Minutes < 1:
             st.Minutes = 10
         if st.RoundsToWin < 1:
@@ -290,12 +365,15 @@ class PvPDirector(Actor):
         save = cast(CreateSaveGameObject(PvPSave), PvPSave)
         st = self.State
         save.Auto = st.Auto
-        save.Bots = st.Bots
+        save.Bots = st.BotSlots > 0
         save.Minutes = st.Minutes
         save.RoundsToWin = st.RoundsToWin
         save.Swap = st.Swap
         save.BotAccuracy = st.BotAccuracy
         save.Rules = st.Rules
+        save.Lang = st.Lang
+        save.BotSlots = st.BotSlots
+        save.SlotsSaved = True
         SaveGameToSlot(save, SLOT, 0)
 
     def Log(self, text: str):
@@ -369,25 +447,62 @@ class PvPDirector(Actor):
 
     def TeamName(self, team: int) -> str:
         if team == SUSPECT:
-            return "подозреваемые"
+            return self.L("подозреваемые", "suspects")
         return "SWAT"
 
-    def Chat(self, text: str, color: LinearColor) -> RChatMessage:
-        return RChatMessage(SenderName="PvP", Message=text, Color=color)
+    def L(self, ru: str, en: str) -> str:
+        """A text in the mode's language: the host's choice in the menu (at first the game's language); on a
+        client the client's own game language."""
+        if self.Russian:
+            return ru
+        return en
+
+    def Chat(self, text: str, killfeed: bool) -> RChatMessage:
+        return RChatMessage(SenderName="PvP", Message=text, Color=LinearColor(R=1.0, G=0.75, B=0.2, A=1.0), bKillfeed=killfeed)
+
+    # The game shows chat in a mission as the green lines at the bottom right, so the mode keeps chat for what a
+    # player needs to read there: the kill feed, the team choice on the pre-mission screen, and the round events
+    # for clients (they may not have the pak, so chat is all they get). The host gets the round events as the
+    # game's own objective popups and the rest in the menu and on the scoreboard.
 
     def Say(self, text: str):
-        """A line in everyone's chat and on the host's HUD."""
+        """A line in everyone's chat (the team choice in the pre-mission screen's chat)."""
         gs = cast(GetGameState(), ReadyOrNotGameState)
         if gs:
-            gs.Multicast_BroadcastChatMessage(self.Chat(text, LinearColor(R=1.0, G=0.75, B=0.2, A=1.0)))
-        self.Toast(text)
+            gs.Multicast_BroadcastChatMessage(self.Chat(text, False))
         self.Log(text)
 
-    def Tell(self, pc: ReadyOrNotPlayerController, text: str):
-        pc.Client_SendChatMessage(self.Chat(text, LinearColor(R=0.6, G=0.9, B=1.0, A=1.0)))
+    def Remote(self, text: str):
+        """A line in the chat of every player but the host."""
+        for pc in self.Players():
+            if not self.IsHost(pc):
+                pc.Client_SendChatMessage(self.Chat(text, False))
+        self.Log(text)
+
+    def Announce(self, text: str):
+        """A round event: the host's objective popup, the clients' chat."""
+        self.Banner(text)
+        self.Remote(text)
+
+    def Notify(self, pc: ReadyOrNotPlayerController, text: str):
+        """One player's event: an objective popup for the host, a chat line for a client."""
         if self.IsHost(pc):
-            self.Toast(text)
+            self.Banner(text)
+        else:
+            pc.Client_SendChatMessage(self.Chat(text, False))
         self.Log("to " + self.NameOf(pc) + ": " + text)
+
+    def Tell(self, pc: ReadyOrNotPlayerController, text: str):
+        """A chat answer to one player (chat commands)."""
+        pc.Client_SendChatMessage(self.Chat(text, False))
+        self.Log("to " + self.NameOf(pc) + ": " + text)
+
+    def Feed(self, text: str):
+        """A kill feed line in everyone's chat, marked as the game marks its own kill feed."""
+        gs = cast(GetGameState(), ReadyOrNotGameState)
+        if gs:
+            gs.Multicast_BroadcastChatMessage(self.Chat(text, True))
+        self.Log("feed: " + text)
 
     def Hud(self) -> W_HumanCharacter_HUD_V2_C:
         for widget in GetAllWidgetsOfClass(W_HumanCharacter_HUD_V2_C, False):
@@ -395,16 +510,26 @@ class PvPDirector(Actor):
                 return cast(widget, W_HumanCharacter_HUD_V2_C)
         return None
 
-    def Toast(self, text: str):
-        hud = self.Hud()
-        if hud:
-            hud.AddToast(text)
-
     def Banner(self, text: str):
+        """The game's objective popup at the bottom centre of the host's HUD (popups stack and fade). Until the
+        HUD is up and the mission has faded in, popups wait (HudTick shows them)."""
         hud = self.Hud()
-        if hud:
-            popup: Text = Text(text)
+        if hud and self.Now() >= self.BannerAfter:
+            popup: Text = Text(ToUpper(text))
             hud.AddObjectivePopup(popup)
+        else:
+            self.Banners.append(text)
+
+    def ShowBanners(self):
+        if len(self.Banners) == 0 or self.Now() < self.BannerAfter:
+            return
+        hud = self.Hud()
+        if not hud:
+            return
+        for text in self.Banners:
+            popup: Text = Text(ToUpper(text))
+            hud.AddObjectivePopup(popup)
+        self.Banners.clear()
 
     def HideSquadHud(self):
         hud = self.Hud()
@@ -422,10 +547,11 @@ class PvPDirector(Actor):
                 suspects = suspects + ("" if suspects == "" else ", ") + self.NameOf(pc)
             else:
                 swat = swat + ("" if swat == "" else ", ") + self.NameOf(pc)
-        return "SWAT: " + ("—" if swat == "" else swat) + " · Подозреваемые: " + ("—" if suspects == "" else suspects)
+        nobody = self.L("никого", "nobody")
+        return "SWAT: " + (nobody if swat == "" else swat) + self.L("; подозреваемые: ", "; suspects: ") + (nobody if suspects == "" else suspects)
 
     def ScoreLine(self) -> str:
-        return f"SWAT {self.State.ScoreSwat} : {self.State.ScoreSuspects} Подозреваемые"
+        return f"SWAT {self.State.ScoreSwat} : {self.State.ScoreSuspects} " + self.L("Подозреваемые", "Suspects")
 
     # ================================================================ the game's switches
 
@@ -452,6 +578,11 @@ class PvPDirector(Actor):
         self.LastRosterText = ""
         self.RulesTold = False
         self.MenuHidden = False
+        self.Protected.clear()
+        self.Alive.clear()
+        self.Fallen.clear()
+        self.SquadSized = False
+        self.SquadFirstAt = 0.0
 
     def NewMatch(self):
         st = self.State
@@ -460,6 +591,10 @@ class PvPDirector(Actor):
         st.ScoreSuspects = 0
         st.HasResult = False
         st.PageMode = "teams"
+        st.Kills.clear()
+        st.Deaths.clear()
+        st.RoundKills.clear()
+        st.RoundDeaths.clear()
 
     def StopMode(self):
         self.State.Active = False
@@ -620,8 +755,30 @@ class PvPDirector(Actor):
         self.Stripped.append(pawn)
         self.Suspects[name] = True
         self.DeathAt.remove(name)
+        self.Protect(pawn)
         self.Log(f"{name} took an AI suspect's place ({stripped} SWAT items removed)")
-        self.Tell(pc, f"Вы — подозреваемый: {self.GunsTitle(primary, secondary)}. ИИ-подозреваемых в запасе: {len(self.LivingAiSuspects())}")
+        self.Notify(pc, self.SuspectLine(self.GunsTitle(primary, secondary)))
+
+    def SuspectLine(self, guns: str) -> str:
+        left = len(self.LivingAiSuspects())
+        return self.L(f"Вы — подозреваемый — {guns} — ИИ-подозреваемых в запасе: {left}",
+                      f"You are a suspect — {guns} — AI suspects left: {left}")
+
+    def Protect(self, pawn: ReadyOrNotCharacter):
+        """A player who has just taken an AI suspect's place cannot be hurt for PROTECT_SECONDS (the game's
+        ReadyOrNotCharacter.bGodMode, which ShouldTakeDamage checks on the server)."""
+        pawn.bGodMode = True
+        self.Protected[pawn] = self.Now() + PROTECT_SECONDS
+
+    def ProtectTick(self, now: float):
+        done: List[ReadyOrNotCharacter] = []
+        for pawn in self.Protected:
+            if not IsValid(pawn) or now >= self.Protected[pawn]:
+                done.append(pawn)
+        for pawn in done:
+            if IsValid(pawn):
+                pawn.bGodMode = False
+            self.Protected.remove(pawn)
 
     def TakeOver(self, pc: ReadyOrNotPlayerController, ai: SuspectCharacter) -> bool:
         """After a suspect player's death the player's new character is spawned right on the AI suspect's
@@ -651,8 +808,12 @@ class PvPDirector(Actor):
         self.FillMagazines(pawn)
         self.Stripped.append(pawn)
         self.DeathAt.remove(name)
+        self.Protect(pawn)
+        if self.IsHost(pc):
+            # the new character fades in: its popup waits
+            self.BannerAfter = self.Now() + 2.0
         self.Log(f"{name} took over an AI suspect ({weapons}, {stripped} SWAT items removed)")
-        self.Tell(pc, f"Вы — подозреваемый: {weapons}. ИИ-подозреваемых в запасе: {len(self.LivingAiSuspects())}")
+        self.Notify(pc, self.SuspectLine(weapons))
         return True
 
     def OnPawnChanged(self, OldPawn: Pawn, NewPawn: Pawn):
@@ -675,7 +836,7 @@ class PvPDirector(Actor):
     def HostWaitsForSquad(self, pc: ReadyOrNotPlayerController) -> bool:
         """The mission start spawns the AI squad around the host's pawn, so with bots a suspect host stays
         at the van until the squad is there (at most 5 s)."""
-        if not self.State.Bots or self.SquadSeen or not self.IsHost(pc):
+        if self.BotsWanted == 0 or self.SquadSeen or not self.IsHost(pc):
             return False
         if len(self.LivingSwat()) > 0:
             self.SquadSeen = True
@@ -701,6 +862,9 @@ class PvPDirector(Actor):
         title = name
         if found:
             title = right
+        # AI suspects' guns: Primary_S_AK103
+        if StartsWith(title, "S_", 0):
+            title = RightChop(title, 2)
         if EndsWith(title, "_V2", 1):
             title = LeftChop(title, 3)
         return title
@@ -930,7 +1094,7 @@ class PvPDirector(Actor):
         title = self.WeaponTitle(LeftChop(right, 2)) if found else path
         pc = cast(pawn.Controller, ReadyOrNotPlayerController)
         self.Log(f"{self.NameOf(pc)} picked up {title}")
-        self.Tell(pc, "Подобрано: " + title)
+        self.Notify(pc, self.L("Подобрано: ", "Picked up: ") + title)
 
     # ================================================================ AI SWAT against suspect players
 
@@ -955,6 +1119,252 @@ class PvPDirector(Actor):
                     changed += 1
         if changed > 0:
             self.Log("AI squad armour -> Kevlar: " + str(changed))
+
+    def BotCount(self, players: List[ReadyOrNotPlayerController]) -> int:
+        """AI officers for this mission: the host's pick in the SWAT slots, at most the slots the SWAT players
+        leave free."""
+        swat = 0
+        for pc in players:
+            if self.TeamOf(pc) != SUSPECT:
+                swat += 1
+        return max(0, min(self.State.BotSlots, min(SLOTS - swat, MAX_BOTS)))
+
+    def SizeSquad(self):
+        """The mission spawns four officers: the ones beyond the host's pick leave (out of the squad lists
+        first, then destroyed), a fifth is spawned next to the squad. The squad is sized 2 s after its first
+        officer shows up, once the mission has spawned all of them."""
+        manager = self.SquadManager()
+        if self.SquadSized or not manager or len(manager.SwatAI) == 0:
+            return
+        if self.SquadFirstAt <= 0.0:
+            self.SquadFirstAt = self.Now()
+        if self.Now() - self.SquadFirstAt < 2.0:
+            return
+        self.SquadSized = True
+        mode = cast(GetGameMode(), CoopGM)
+        while len(manager.SwatAI) > self.BotsWanted:
+            bot = manager.SwatAI[len(manager.SwatAI) - 1]
+            manager.SwatAI.remove(bot)
+            if mode:
+                mode.SpawnedSWATAI.remove(bot)
+            controller = bot.Controller
+            bot.K2_DestroyActor()
+            if controller:
+                controller.K2_DestroyActor()
+        if len(manager.SwatAI) < self.BotsWanted and mode:
+            self.AddBot(manager, mode)
+        self.Log(f"AI squad: {len(manager.SwatAI)} officers (wanted {self.BotsWanted})")
+
+    def AddBot(self, manager: SWATManager, mode: CoopGM):
+        """A fifth officer: the squad's class spawned next to the first officer in squad position Foxtrot, with
+        its class's AI controller and the first officer's team, then put on the squad lists."""
+        first = manager.SwatAI[0]
+        at = first.K2_GetActorLocation()
+        transform = MakeTransform(Vector(X=at.X + 100.0, Y=at.Y + 60.0, Z=at.Z + 20.0),
+                                  Rotator(Pitch=0.0, Yaw=first.K2_GetActorRotation().Yaw, Roll=0.0), Vector(X=1.0, Y=1.0, Z=1.0))
+        actor = BeginDeferredActorSpawnFromClass(mode.SwatAlphaClass, transform, 2, None, 1)
+        bot = cast(actor, SWATCharacter)
+        if not bot:
+            self.Log("fifth officer: no spawn")
+            return
+        bot.SquadPosition = 4
+        FinishSpawningActor(actor, transform, 1)
+        if not bot.Controller:
+            bot.SpawnDefaultController()
+        bot.DefaultTeam = first.DefaultTeam
+        manager.SwatAI.append(bot)
+        mode.SpawnedSWATAI.append(bot)
+        self.CopyKit(first, bot)
+        # the mission dresses only its own officers: the first one's clothes with a face of the game's roster
+        # (Customization is replicated, OnRep_Customization dresses the character)
+        custom = first.Customization
+        face = MakeSoftObjectPath("/Game/Blueprints/Customization/Characters/CC_Gideon.CC_Gideon")
+        character = cast(LoadAsset_Blocking(Conv_SoftObjPathToSoftObjRef(face)), CustomizationDataBase)
+        if character:
+            custom.Character = character
+        bot.Customization = custom
+        bot.OnRep_Customization()
+        item = bot.GetEquippedItem()
+        self.Log("fifth officer: " + (self.ClassName(item) if item else "no weapon") + (", AI controller" if bot.Controller else ", no controller"))
+
+    def CopyKit(self, source: ReadyOrNotCharacter, target: ReadyOrNotCharacter):
+        """One officer's kit on another (the mission equips only the officers it spawns): the guns, the
+        armour, the helmet with its mount, the facewear."""
+        loadout = SavedLoadout(PrimaryAmmoSlotsCount=-1, SecondaryAmmoSlotsCount=-1, GrenadeSlotsCount=0, TacticalSlotsCount=0)
+        for item in source.InventoryComp.InventoryItems:
+            if not item:
+                continue
+            name = self.ClassName(item)
+            path = GetPathName(GetObjectClass(item))
+            if StartsWith(name, "Primary_", 0):
+                loadout.Primary = self.LoadClassPath(path)
+            elif StartsWith(name, "Secondary_", 0):
+                loadout.Secondary = self.LoadClassPath(path)
+            elif StartsWith(name, "Armor_", 0):
+                loadout.Armor = self.LoadClassPath(path)
+            elif StartsWith(name, "Helmet_", 0):
+                loadout.Helmet = self.LoadClassPath(path)
+            elif StartsWith(name, "BP_HelmetMount", 0):
+                loadout.HelmetMount = self.LoadClassPath(path)
+            elif StartsWith(name, "BP_Facewear", 0):
+                loadout.Facewear = self.LoadClassPath(path)
+        self.EquipKit(target, loadout, True)
+
+    def CallSign(self, character: ReadyOrNotCharacter) -> str:
+        """An officer's name: the face it wears (Customization.Character, CC_King: King), else the name of its
+        squad position (a co-op mission's squad is King, Swan, Prescott, Eli; the mode adds Gideon)."""
+        if character.Customization.Character:
+            name = GetObjectName(character.Customization.Character)
+            if StartsWith(name, "CC_", 0):
+                return RightChop(name, 3)
+        position = int(character.SquadPosition)
+        if position >= 0 and position < 5:
+            return self.BotNames()[position]
+        return "SWAT"
+
+    def BotNames(self) -> List[str]:
+        names: List[str] = ["King", "Swan", "Prescott", "Eli", "Gideon"]
+        return names
+
+    # ================================================================ kills, deaths and the kill feed
+
+    def Who(self, character: ReadyOrNotCharacter) -> str:
+        """The kill feed's name: a player's name, an officer's call sign, a suspect, a civilian ("" for the
+        reserve officers the game keeps under the map)."""
+        if isinstance(character, TrailerSWATCharacter):
+            return ""
+        pc = cast(character.Controller, ReadyOrNotPlayerController)
+        if pc and IsValid(pc.PlayerState):
+            return self.NameOf(pc)
+        if isinstance(character, SWATCharacter):
+            return self.CallSign(character)
+        if isinstance(character, SuspectCharacter):
+            return self.L("подозреваемый", "suspect")
+        if isinstance(character, CivilianCharacter):
+            return self.L("гражданский", "civilian")
+        return ""
+
+    def SideOf(self, character: ReadyOrNotCharacter) -> int:
+        """SWAT, SUSPECT, or 0 for anyone else (civilians)."""
+        if isinstance(character, SuspectCharacter) or character.DefaultTeam == SUSPECT:
+            return SUSPECT
+        if isinstance(character, SWATCharacter) or isinstance(character, PlayerCharacter):
+            return SWAT
+        return 0
+
+    def TrackTick(self, now: float):
+        """Everyone seen standing is noted with a name; one that falls (dead, incapacitated, arrested or
+        surrendered) counts as a kill of whoever the game noted as the killer (KilledBy, IncapacitatedBy)."""
+        if now < self.TrackAt:
+            return
+        self.TrackAt = now + 0.25
+        for actor in GetAllActorsOfClass(ReadyOrNotCharacter):
+            character = cast(actor, ReadyOrNotCharacter)
+            if not character or actor in self.Fallen or actor in self.Removed:
+                continue
+            if not self.IsDown(character):
+                if not (character in self.Alive):
+                    name = self.Who(character)
+                    if name != "":
+                        self.Alive[character] = name
+                continue
+            if character in self.Alive:
+                self.Fallen.append(actor)
+                self.Fell(character, self.Alive[character])
+                self.Alive.remove(character)
+
+    def Fell(self, victim: ReadyOrNotCharacter, name: str):
+        """A player's death and a player's kill of an enemy count for the match and the round; the kill feed
+        shows what involves a player or costs the SWAT an officer."""
+        st = self.State
+        killer = victim.KilledBy
+        if not killer:
+            killer = victim.IncapacitatedBy
+        side = self.SideOf(victim)
+        victim_player = isinstance(victim, PlayerCharacter)
+        if victim_player:
+            st.Deaths[name] = st.Deaths.get(name, 0) + 1
+            st.RoundDeaths[name] = st.RoundDeaths.get(name, 0) + 1
+        killer_name = ""
+        killer_player = False
+        weapon = ""
+        if killer and killer != victim:
+            killer_name = self.Alive.get(killer, "")
+            if killer_name == "":
+                killer_name = self.Who(killer)
+            killer_player = isinstance(killer, PlayerCharacter)
+            item = killer.GetEquippedItem()
+            if item:
+                weapon = self.WeaponTitle(self.ClassName(item))
+            if killer_player and side != 0 and self.SideOf(killer) != side:
+                st.Kills[killer_name] = st.Kills.get(killer_name, 0) + 1
+                st.RoundKills[killer_name] = st.RoundKills.get(killer_name, 0) + 1
+        self.Log(f"down: {name} by {killer_name} ({weapon})")
+        if not victim_player and not killer_player and not isinstance(victim, SWATCharacter):
+            return
+        if killer_name == "":
+            self.Feed(self.L(f"{name} выбыл", f"{name} is down"))
+        elif weapon == "":
+            self.Feed(self.L(f"{killer_name} убил {name}", f"{killer_name} killed {name}"))
+        else:
+            self.Feed(self.L(f"{killer_name} убил {name} ({weapon})", f"{killer_name} killed {name} ({weapon})"))
+
+    def PublishStats(self, players: List[ReadyOrNotPlayerController]):
+        """The match's kills and deaths go into the players' replicated PlayerState (the game's scoreboard
+        lines show them), the score and the round's time left into the replicated GameState fields its PvP
+        modes use: the scoreboard of a client with the pak reads them."""
+        st = self.State
+        for pc in players:
+            name = self.NameOf(pc)
+            state = self.StateOf(pc)
+            kills = st.Kills.get(name, 0)
+            deaths = st.Deaths.get(name, 0)
+            if state.Kills != kills:
+                state.Kills = kills
+            if state.Deaths != deaths:
+                state.Deaths = deaths
+        gs = cast(GetGameState(), ReadyOrNotGameState)
+        if not gs:
+            return
+        if gs.BlueTeamWins != st.ScoreSwat:
+            gs.BlueTeamWins = st.ScoreSwat
+        if gs.RedTeamWins != st.ScoreSuspects:
+            gs.RedTeamWins = st.ScoreSuspects
+        if st.Phase == "live":
+            gs.RoundTimeRemaining = max(self.EndsAt - self.Now(), 1.0)
+        elif st.Phase != "roundover":
+            gs.RoundTimeRemaining = 0.0
+
+    def FillStats(self, final: bool, players: List[ReadyOrNotPlayerController]):
+        """The result page's table (the match's or the round's kills and deaths) and its best player: most
+        kills, then fewest deaths."""
+        st = self.State
+        st.ResultNames.clear()
+        st.ResultTeams.clear()
+        st.ResultKills.clear()
+        st.ResultDeaths.clear()
+        best = ""
+        best_kills = 0
+        best_deaths = 0
+        for pc in players:
+            name = self.NameOf(pc)
+            kills = 0
+            deaths = 0
+            if final:
+                kills = st.Kills.get(name, 0)
+                deaths = st.Deaths.get(name, 0)
+            else:
+                kills = st.RoundKills.get(name, 0)
+                deaths = st.RoundDeaths.get(name, 0)
+            st.ResultNames.append(name)
+            st.ResultTeams.append(SUSPECT if self.IsSuspect(pc) else SWAT)
+            st.ResultKills.append(kills)
+            st.ResultDeaths.append(deaths)
+            if kills > best_kills or (kills == best_kills and kills > 0 and deaths < best_deaths):
+                best = name
+                best_kills = kills
+                best_deaths = deaths
+        st.ResultMvp = best
 
     def FireTick(self):
         """AI SWAT never clear a player suspect for fire by themselves; the ones that see a suspect player get
@@ -1126,7 +1536,8 @@ class PvPDirector(Actor):
             if self.IsSuspect(pc) != swat_won:
                 winners = winners + ("" if winners == "" else ", ") + self.NameOf(pc)
         if winners == "":
-            winners = "ИИ-отряд SWAT" if swat_won else "ИИ-подозреваемые"
+            winners = self.L("ИИ-отряд SWAT", "the AI SWAT squad") if swat_won else self.L("ИИ-подозреваемые", "the AI suspects")
+        self.FillStats(final, players)
         st.HasResult = True
         st.ResultRound = st.Round
         st.ResultSwatWon = swat_won
@@ -1138,14 +1549,15 @@ class PvPDirector(Actor):
         st.ResultWinners = winners
         st.Phase = "roundover"
         self.BreakEnds = now + BREAK_SECONDS
-        side = "SWAT" if swat_won else "подозреваемых"
-        text = f"Раунд {st.Round}: победа {side} — {reason}. {self.ScoreLine()}"
-        self.Say(text)
-        self.Banner(text)
+        side = "SWAT" if swat_won else self.L("подозреваемых", "the suspects")
+        self.Banner(self.L(f"Раунд {st.Round} — победа {side} — {self.ScoreLine()}", f"Round {st.Round} — {side} win — {self.ScoreLine()}"))
+        self.Remote(self.L(f"Раунд {st.Round}: победа {side} — {reason}. {self.ScoreLine()}",
+                           f"Round {st.Round}: {side} win — {reason}. {self.ScoreLine()}"))
         if final:
-            self.Say(f"Матч окончен: победили {'SWAT' if swat_won else 'подозреваемые'} ({winners}). {self.ScoreLine()}")
+            self.Announce(self.L(f"Матч окончен — победили {winners}", f"Match over — {winners} win"))
         elif swapped:
-            self.Say("Половина матча: после этого раунда команды меняются сторонами")
+            self.Announce(self.L("Половина матча: после этого раунда команды меняются сторонами",
+                                 "Half time: the teams swap sides after this round"))
 
     def Travel(self):
         """The same mission again in the same game mode for every connected player (servertravel keeps a
@@ -1159,7 +1571,8 @@ class PvPDirector(Actor):
             if cut:
                 mode = head
         if level == "":
-            self.Say("PvP: не удалось перезапустить миссию для следующего раунда — режим выключен")
+            self.Announce(self.L("PvP: не удалось перезапустить миссию для следующего раунда — режим выключен",
+                                 "PvP: the mission could not be restarted for the next round — the mode is off"))
             self.StopMode()
             return
         command = "open "
@@ -1201,21 +1614,26 @@ class PvPDirector(Actor):
             self.Log("nobody plays a suspect: a plain co-op mission")
             self.StopMode()
             return
-        self.MatchBots = st.Bots
+        self.BotsWanted = self.BotCount(players)
+        self.MatchBots = self.BotsWanted > 0
         if swat_players == 0 and not self.MatchBots:
-            self.Say("PvP: нет ни игроков SWAT, ни ботов — режим выключен")
+            self.Announce(self.L("PvP: нет ни игроков SWAT, ни ботов — режим выключен", "PvP: no SWAT players and no bots — the mode is off"))
             self.StopMode()
             return
         if not self.MatchBots:
             self.HostPC().DestroySwatTeam()
         st.Phase = "live"
         self.StartedAt = now
+        # the mission fades in from the loading screen: the round's popups wait for it
+        self.BannerAfter = now + 3.0
         self.EndsAt = now + st.Minutes * 60.0
         self.DeathAt.clear()
         self.DeathTold.clear()
         self.Warned300 = False
         self.Warned60 = False
         st.PageMode = "teams"
+        st.RoundKills.clear()
+        st.RoundDeaths.clear()
         self.HuntReset(now)
         for pc in players:
             # a suspect whose booking was lost (AI gone, ready state missed) takes over now
@@ -1223,12 +1641,10 @@ class PvPDirector(Actor):
                 self.DeathAt[self.NameOf(pc)] = now - RESPAWN_DELAY
                 self.DeathTold[self.NameOf(pc)] = True
         if st.Round == 1:
-            length = f"до {st.RoundsToWin} побед" if st.RoundsToWin > 1 else "из одного раунда"
-            squad = "ИИ-отряд SWAT в игре." if self.MatchBots else "Без ИИ-отряда SWAT."
-            self.Say(f"PvP: матч {length}, раунд {st.Minutes} мин. Подозреваемые берут раунд, если положат всех SWAT или продержатся; SWAT — если нейтрализует всех подозреваемых. Убитый подозреваемый через 10 с вселяется в ИИ-подозреваемого. {squad} {self.RulesText()} Подозреваемые открывают любые двери и забирают упавшее оружие (зажмите сбор улики на стволе).")
-        text = f"Раунд {st.Round} · {self.ScoreLine()} · {st.Minutes} мин"
-        self.Say(text)
-        self.Banner(text)
+            # the host read the rules in the menu; a client may not have the pak
+            self.Remote(self.L("PvP: подозреваемые берут раунд, если положат всех SWAT или продержатся; убитый подозреваемый через 10 с вселяется в ИИ-подозреваемого. Подозреваемые открывают любые двери и подбирают упавшее оружие (зажать сбор улики).",
+                               "PvP: the suspects win a round by taking down all SWAT or by holding out; a dead suspect takes over an AI suspect after 10 s. Suspects open any door and pick up dropped guns (hold evidence collection)."))
+        self.Announce(self.L(f"Раунд {st.Round} — {self.ScoreLine()} — {st.Minutes} мин", f"Round {st.Round} — {self.ScoreLine()} — {st.Minutes} min"))
 
     def PreMissionScreen(self) -> W_PreMission_C:
         for widget in GetAllWidgetsOfClass(W_PreMission_C, False):
@@ -1262,7 +1678,7 @@ class PvPDirector(Actor):
             gs.TimeTillGameStartCountdown = 10.0
             if not self.HoldTold:
                 self.HoldTold = True
-                self.Say("Старт ждёт хоста: выберите сторону в меню и нажмите «Готов»")
+                self.Remote(self.L("Старт ждёт хоста: он выбирает сторону", "The start waits for the host to pick a side"))
 
     def ReadyEveryone(self, players: List[ReadyOrNotPlayerController], now: float):
         """Between rounds nobody has to press Ready: the host readies through its own ReadyUp (asked at most
@@ -1304,10 +1720,11 @@ class PvPDirector(Actor):
         if st.Phase == "travel":
             # a travel blocks this world while it loads; this world still ticking means it failed
             if now - st.TravelAt > 30.0:
-                self.Say("PvP: следующий раунд не загрузился — режим выключен")
+                self.Announce(self.L("PvP: следующий раунд не загрузился — режим выключен", "PvP: the next round did not load — the mode is off"))
                 self.StopMode()
             return
         players = self.Players()
+        self.PublishStats(players)
         if st.Phase == "briefing":
             self.BriefingTick(now, players)
         elif st.Phase == "live":
@@ -1318,10 +1735,14 @@ class PvPDirector(Actor):
     def FastTick(self):
         if not self.Server or not self.State.Active:
             return
+        now = self.Now()
+        if len(self.Protected) > 0:
+            self.ProtectTick(now)
         if self.State.Phase == "briefing":
             self.HoldStart()
         if self.State.Phase == "live":
-            self.PickupTick(self.Now())
+            self.PickupTick(now)
+            self.TrackTick(now)
         if len(self.ConvertAi) == 0:
             return
         for pc in self.Players():
@@ -1334,7 +1755,8 @@ class PvPDirector(Actor):
             if self.TeamOf(pc) == SUSPECT:
                 any_suspect = True
         # the AI squad of a hosted mission only when somebody plays a suspect (or the match goes on)
-        self.SetSquadVariable(st.Bots and (any_suspect or st.Round > 1))
+        self.BotsWanted = self.BotCount(players)
+        self.SetSquadVariable(self.BotsWanted > 0 and (any_suspect or st.Round > 1))
         host = self.HostPC()
         # after a round the result shows and the next round starts by itself
         if st.PageMode == "round" and st.HasResult:
@@ -1348,15 +1770,15 @@ class PvPDirector(Actor):
             self.ShowMenu(players, host, now)
         if not self.RulesTold and st.Round == 1:
             self.RulesTold = True
-            squad = "ИИ-отряд SWAT в игре" if st.Bots else "без ИИ-отряда SWAT"
-            self.Say(f"PvP: SWAT против подозреваемых · раунд {st.Minutes} мин · {squad}. Подозреваемые воюют вместе с ИИ-подозреваемыми и после смерти вселяются в них")
+            self.Remote(self.L(f"PvP: SWAT против подозреваемых — раунд {st.Minutes} мин — ботов SWAT: {self.BotsWanted}. Подозреваемые воюют вместе с ИИ-подозреваемыми и после смерти вселяются в них",
+                               f"PvP: SWAT against suspects — {st.Minutes} min rounds — SWAT bots: {self.BotsWanted}. Suspects fight alongside the AI suspects and take one over when they die"))
         roster = self.Roster(players)
         if roster != self.LastRosterText:
             self.LastRosterText = roster
             if st.Round > 1:
-                self.Say(f"Раунд {st.Round} · {roster}")
+                self.Remote(self.L(f"Раунд {st.Round} — ", f"Round {st.Round} — ") + roster)
             else:
-                self.Say(roster + ". Выбор стороны: у хоста меню на экране подготовки, у остальных — чат !swat или !suspect")
+                self.Remote(roster + self.L(". Выбор стороны: чат !swat или !suspect", ". Pick a side in chat: !swat or !suspect"))
         # once everyone is ready the suspects get their AI suspects booked and their spawn kit set (a
         # player's own Ready overwrites ServerSavedLoadout, so the kit is put back while it is missing)
         gs = cast(GetGameState(), ReadyOrNotGameState)
@@ -1394,6 +1816,7 @@ class PvPDirector(Actor):
             self.HideSquadHud()
         self.DoorsTick()
         if self.MatchBots:
+            self.SizeSquad()
             self.ArmourSquad()
             self.DirectSquad(now, players)
         swat_players = 0
@@ -1428,9 +1851,11 @@ class PvPDirector(Actor):
                         self.DeathTold[name] = True
                         if ai_left > 0:
                             pc.NotifyRespawnTime(RESPAWN_DELAY)
-                            self.Tell(pc, f"Вселение в ИИ-подозреваемого через 10 с (в запасе: {ai_left})")
+                            self.Notify(pc, self.L(f"Вселение в ИИ-подозреваемого через 10 с — в запасе: {ai_left}",
+                                                   f"Taking over an AI suspect in 10 s — left: {ai_left}"))
                         else:
-                            self.Tell(pc, "ИИ-подозреваемых не осталось — вы наблюдаете за своими до конца раунда")
+                            self.Notify(pc, self.L("ИИ-подозреваемых не осталось — вы наблюдаете до конца раунда",
+                                                   "No AI suspects left — you spectate until the round ends"))
                     if ai_left > 0 and now >= self.DeathAt[name] + RESPAWN_DELAY:
                         has_where = name in self.DeathWhere
                         where = Vector(X=0.0, Y=0.0, Z=0.0)
@@ -1453,25 +1878,25 @@ class PvPDirector(Actor):
             self.SetSquadVariable(False)
         if self.MatchBots and not self.SquadSeen and now - self.StartedAt > 30.0:
             self.MatchBots = False
-            self.Say("PvP: ИИ-отряд SWAT не появился — играем без ботов")
+            self.Announce(self.L("PvP: ИИ-отряд SWAT не появился — играем без ботов", "PvP: the AI SWAT squad did not show up — playing without bots"))
         if now - self.StartedAt < 10.0:
             return
         if swat_players > 0 and swat_alive == 0:
-            self.EndRound(now, players, False, "все бойцы SWAT нейтрализованы")
+            self.EndRound(now, players, False, self.L("все бойцы SWAT нейтрализованы", "all SWAT players are down"))
         elif swat_players == 0 and self.MatchBots and self.SquadSeen and squad == 0:
-            self.EndRound(now, players, False, "ИИ-отряд SWAT уничтожен")
+            self.EndRound(now, players, False, self.L("ИИ-отряд SWAT уничтожен", "the AI SWAT squad is down"))
         elif now >= self.EndsAt:
-            self.EndRound(now, players, False, "время вышло, подозреваемые продержались")
+            self.EndRound(now, players, False, self.L("время вышло, подозреваемые продержались", "time is up, the suspects held out"))
         elif ai_left == 0 and suspect_alive == 0 and waiting == 0:
-            self.EndRound(now, players, True, "все подозреваемые нейтрализованы")
+            self.EndRound(now, players, True, self.L("все подозреваемые нейтрализованы", "all suspects are down"))
         else:
             left = self.EndsAt - now
             if left <= 300.0 and not self.Warned300 and self.EndsAt - self.StartedAt > 300.0:
                 self.Warned300 = True
-                self.Say(f"До конца раунда 5:00 · ИИ-подозреваемых: {ai_left}")
+                self.Announce(self.L(f"До конца раунда 5:00 — ИИ-подозреваемых: {ai_left}", f"5:00 left in the round — AI suspects: {ai_left}"))
             if left <= 60.0 and not self.Warned60 and self.EndsAt - self.StartedAt > 60.0:
                 self.Warned60 = True
-                self.Say(f"До конца раунда 1:00 · ИИ-подозреваемых: {ai_left}")
+                self.Announce(self.L(f"До конца раунда 1:00 — ИИ-подозреваемых: {ai_left}", f"1:00 left in the round — AI suspects: {ai_left}"))
 
     # ================================================================ chat
 
@@ -1496,29 +1921,57 @@ class PvPDirector(Actor):
             team = SUSPECT
         if team != 0:
             if st.Phase != "briefing" and st.Phase != "travel":
-                self.Tell(sender, "Команду можно сменить только до начала раунда")
+                self.Tell(sender, self.L("Команду можно сменить только до начала раунда", "Teams can only be changed before the round starts"))
                 return
             st.Teams[self.NameOf(sender)] = team
-            self.Say(self.NameOf(sender) + " → " + self.TeamName(team))
+            self.Say(self.NameOf(sender) + " — " + self.TeamName(team))
         elif text == "!teams" or text == "!команды":
             self.Tell(sender, self.Roster(self.Players()))
 
-    # ================================================================ the host's menu
+    # ================================================================ the game's look
+
+    def LoadFonts(self, pc: PlayerController):
+        """The font of the game's menus (Barlow, with Cyrillic), taken from a scoreboard line's name: SemiBold
+        for titles, Medium for the rest, as on the pre-mission screen. A text block made by the mode otherwise
+        gets the engine's default font."""
+        if self.FontsReady:
+            return
+        line = cast(Create(W_Scoreboard_Line_C, pc), W_Scoreboard_Line_C)
+        if not line:
+            return
+        self.FontBold = line.Name.Font
+        self.FontPlain = line.Name.Font
+        self.FontPlain.TypefaceFontName = "Medium"
+        self.FontsReady = True
 
     def Col(self, r: float, g: float, b: float, a: float) -> LinearColor:
         return LinearColor(R=r, G=g, B=b, A=a)
 
+    def TeamColor(self, swat: bool) -> LinearColor:
+        """The team colours of the game's scoreboard."""
+        if swat:
+            return self.Col(0.35, 0.55, 1.0, 1.0)
+        return self.Col(1.0, 0.45, 0.15, 1.0)
+
     def Paint(self, text: TextBlock, color: LinearColor):
         text.SetColorAndOpacity(SlateColor(SpecifiedColor=color, ColorUseRule=0))
 
-    def MakeText(self, value: str, size: int, color: LinearColor) -> TextBlock:
-        text = cast(SpawnObject(TextBlock, self.Screen.WidgetTree), TextBlock)
+    def TextIn(self, tree: WidgetTree, value: str, size: int, bold: bool, color: LinearColor) -> TextBlock:
+        text = cast(SpawnObject(TextBlock, tree), TextBlock)
         text.SetText(Text(value))
         font = text.Font
+        if self.FontsReady:
+            font = self.FontBold if bold else self.FontPlain
         font.Size = size
         text.SetFont(font)
         self.Paint(text, color)
         return text
+
+    def MakeText(self, value: str, size: int, color: LinearColor) -> TextBlock:
+        """A text on the pre-mission screen: the game's bold font for titles, its plain one for the rest."""
+        return self.TextIn(self.Screen.WidgetTree, value, size, size >= 24, color)
+
+    # ================================================================ the host's menu
 
     def Fill(self, color: LinearColor, left: float, top: float, right: float, bottom: float) -> Border:
         border = cast(SpawnObject(Border, self.Screen.WidgetTree), Border)
@@ -1583,26 +2036,29 @@ class PvPDirector(Actor):
             widget.SetVisibility(value)
 
     def Card(self, key: str) -> SizeBox:
-        """A team card: coloured header with the title and "n / 5", the player rows, a status line and the
-        join button."""
+        """A team card: a dark panel with the team's name in its colour and "n / 5", the player rows (the SWAT
+        card then has the bot slots: a click on a bot takes it away, on a free slot adds one), a status line
+        and the join button."""
         swat = key == "swat"
-        body = self.Fill(self.Col(0.006, 0.012, 0.025, 0.96) if swat else self.Col(0.025, 0.012, 0.004, 0.96), 0.0, 0.0, 0.0, 0.0)
+        white = self.Col(1.0, 1.0, 1.0, 1.0)
+        grey = self.Col(0.45, 0.47, 0.5, 1.0)
+        body = self.Fill(self.Col(0.006, 0.007, 0.009, 0.94), 0.0, 0.0, 0.0, 0.0)
         box = self.VBox()
         body.SetContent(box)
-        header = self.Fill(self.Col(0.04, 0.1, 0.27, 1.0) if swat else self.Col(0.36, 0.13, 0.015, 1.0), 22.0, 16.0, 22.0, 16.0)
+        header = self.Fill(self.Col(0.02, 0.022, 0.026, 1.0), 22.0, 14.0, 22.0, 14.0)
         self.Add(box, header, 0.0, 0.0, 0.0, 0.0, 0, False, 0)
         header_row = self.HBox()
         header.SetContent(header_row)
-        self.Add(header_row, self.MakeText("SWAT" if swat else "ПОДОЗРЕВАЕМЫЕ", 32, self.Col(1.0, 1.0, 1.0, 1.0)), 0.0, 0.0, 0.0, 0.0, 0, True, 0)
-        count = self.MakeText("0 / 5", 28, self.Col(1.0, 1.0, 1.0, 1.0))
-        self.Add(header_row, count, 24.0, 4.0, 0.0, 0.0, 0, False, 0)
-        accent = self.Col(0.3, 0.5, 1.0, 1.0) if swat else self.Col(1.0, 0.5, 0.12, 1.0)
+        title = self.MakeText("SWAT" if swat else self.L("ПОДОЗРЕВАЕМЫЕ", "SUSPECTS"), 30, self.TeamColor(swat))
+        self.Add(header_row, title, 0.0, 0.0, 0.0, 0.0, 0, True, ALIGN_CENTER)
+        count = self.MakeText("0 / 5", 26, white)
+        self.Add(header_row, count, 24.0, 0.0, 0.0, 0.0, 0, False, ALIGN_CENTER)
         rows = self.VBox()
-        self.Add(box, rows, 22.0, 18.0, 22.0, 0.0, 0, False, 0)
-        self.Add(rows, self.MakeText("ИГРОКИ", 14, accent), 0.0, 0.0, 0.0, 8.0, 0, False, 0)
+        self.Add(box, rows, 22.0, 16.0, 22.0, 0.0, 0, False, 0)
+        self.Add(rows, self.MakeText(self.L("ИГРОКИ", "PLAYERS"), 15, grey), 0.0, 0.0, 0.0, 6.0, 0, False, 0)
         for i in range(MAX_ROWS):
-            row = self.Fill(self.Col(0.0, 0.0, 0.0, 0.45), 14.0, 9.0, 14.0, 9.0)
-            text = self.MakeText("", 20, self.Col(1.0, 1.0, 1.0, 1.0))
+            row = self.Fill(self.Col(1.0, 1.0, 1.0, 0.045), 14.0, 9.0, 14.0, 9.0)
+            text = self.MakeText("", 20, white)
             row.SetContent(text)
             self.Add(rows, row, 0.0, 3.0, 0.0, 3.0, 0, False, 0)
             if swat:
@@ -1611,30 +2067,37 @@ class PvPDirector(Actor):
             else:
                 self.SuspectRows.append(row)
                 self.SuspectTexts.append(text)
-        status = self.MakeText("", 16, accent)
-        self.Add(rows, status, 0.0, 12.0, 0.0, 0.0, 0, False, 0)
-        join = self.MakeButton("ВСТУПИТЬ", STYLE_LIGHT if swat else STYLE_RED, key, 22)
+        if swat:
+            for i in range(SLOTS):
+                slot_button = self.MakeButton("", STYLE_DARK, "slot" + str(i), 17)
+                self.Add(rows, slot_button, 0.0, 3.0, 0.0, 3.0, 0, False, 0)
+                self.SlotButtons.append(slot_button)
+        status = self.MakeText("", 15, grey)
+        self.Add(rows, status, 0.0, 10.0, 0.0, 0.0, 0, False, 0)
+        join = self.MakeButton(self.L("ВСТУПИТЬ", "JOIN"), STYLE_LIGHT if swat else STYLE_RED, key, 22)
         self.Add(box, join, 22.0, 14.0, 22.0, 22.0, 0, False, 0)
         if swat:
             self.SwatHeader = header
             self.SwatCount = count
             self.SwatStatus = status
             self.SwatJoin = join
+            self.SwatTitle = title
         else:
             self.SuspectHeader = header
             self.SuspectCount = count
             self.SuspectStatus = status
             self.SuspectJoin = join
+            self.SuspectTitle = title
         return self.Sized(body, 560.0, 0.0)
 
     def ScoreBox(self, swat: bool) -> SizeBox:
-        """One side of the score: the team's name and round wins on its colour, the number by the colon."""
-        box = self.Fill(self.Col(0.04, 0.1, 0.27, 1.0) if swat else self.Col(0.36, 0.13, 0.015, 1.0), 30.0, 10.0, 30.0, 10.0)
+        """One side of the score: the team's name in its colour and its round wins by the colon."""
+        box = self.Fill(self.Col(0.02, 0.022, 0.026, 0.96), 30.0, 10.0, 30.0, 10.0)
         box.SetHorizontalAlignment(ALIGN_RIGHT if swat else ALIGN_LEFT)
         box.SetVerticalAlignment(ALIGN_CENTER)
         row = self.HBox()
         box.SetContent(row)
-        name = self.MakeText("SWAT" if swat else "ПОДОЗРЕВАЕМЫЕ", 28, self.Col(1.0, 1.0, 1.0, 1.0))
+        name = self.MakeText("SWAT" if swat else self.L("ПОДОЗРЕВАЕМЫЕ", "SUSPECTS"), 28, self.TeamColor(swat))
         number = self.MakeText("0", 72, self.Col(1.0, 1.0, 1.0, 1.0))
         if swat:
             self.Add(row, name, 0.0, 0.0, 0.0, 0.0, 0, False, ALIGN_CENTER)
@@ -1648,19 +2111,41 @@ class PvPDirector(Actor):
             self.ResSuspectNumber = number
         return self.Sized(box, 460.0, 120.0)
 
+    def StatRow(self, name: str, kills: str, deaths: str, color: LinearColor) -> HorizontalBox:
+        """A row of the result table: the name, kills and deaths in fixed columns."""
+        row = self.HBox()
+        name_text = self.MakeText(name, 20, color)
+        kills_text = self.MakeText(kills, 20, color)
+        deaths_text = self.MakeText(deaths, 20, color)
+        kills_text.SetJustification(1)
+        deaths_text.SetJustification(1)
+        self.Add(row, self.Sized(name_text, 420.0, 0.0), 0.0, 0.0, 0.0, 0.0, 0, False, ALIGN_CENTER)
+        self.Add(row, self.Sized(kills_text, 140.0, 0.0), 0.0, 0.0, 0.0, 0.0, 0, False, ALIGN_CENTER)
+        self.Add(row, self.Sized(deaths_text, 140.0, 0.0), 0.0, 0.0, 0.0, 0.0, 0, False, ALIGN_CENTER)
+        self.StatNames.append(name_text)
+        self.StatKills.append(kills_text)
+        self.StatDeaths.append(deaths_text)
+        return row
+
     def BuildMenu(self):
-        """The page over the host's pre-mission screen, built from UMG primitives in the screen's root
-        canvas; the buttons are the game's W_StandardButton_C."""
+        """The page over the host's pre-mission screen, built from UMG primitives in the screen's root canvas
+        in the game's fonts; the buttons are the game's W_StandardButton_C."""
         self.Actions.clear()
         self.SwatRows.clear()
         self.SwatTexts.clear()
         self.SuspectRows.clear()
         self.SuspectTexts.clear()
+        self.SlotButtons.clear()
         self.RoundButtons.clear()
+        self.StatRows.clear()
+        self.StatNames.clear()
+        self.StatKills.clear()
+        self.StatDeaths.clear()
         root = cast(self.Screen.WidgetTree.RootWidget, CanvasPanel)
         if not root:
             self.Log("menu: the pre-mission screen has no root canvas")
             return
+        self.LoadFonts(self.HostPC())
         page = self.Fill(self.Col(0.01, 0.012, 0.016, 0.86), 0.0, 0.0, 0.0, 0.0)
         page.SetHorizontalAlignment(ALIGN_CENTER)
         page.SetVerticalAlignment(ALIGN_CENTER)
@@ -1670,63 +2155,75 @@ class PvPDirector(Actor):
         content = self.VBox()
         page.SetContent(content)
         white = self.Col(1.0, 1.0, 1.0, 1.0)
-        grey = self.Col(0.32, 0.34, 0.37, 1.0)
+        grey = self.Col(0.45, 0.47, 0.5, 1.0)
 
         teams = self.VBox()
         self.Add(content, teams, 0.0, 0.0, 0.0, 0.0, ALIGN_CENTER, False, 0)
-        self.Add(teams, self.MakeText("ВЫБЕРИТЕ КОМАНДУ", 54, white), 0.0, 0.0, 0.0, 0.0, ALIGN_CENTER, False, 0)
+        self.Add(teams, self.MakeText(self.L("ВЫБЕРИТЕ КОМАНДУ", "CHOOSE YOUR TEAM"), 50, white), 0.0, 0.0, 0.0, 0.0, ALIGN_CENTER, False, 0)
         self.Subtitle = self.MakeText("", 18, grey)
-        self.Add(teams, self.Subtitle, 0.0, 4.0, 0.0, 30.0, ALIGN_CENTER, False, 0)
+        self.Add(teams, self.Subtitle, 0.0, 4.0, 0.0, 28.0, ALIGN_CENTER, False, 0)
         cards = self.HBox()
         self.Add(teams, cards, 0.0, 0.0, 0.0, 0.0, ALIGN_CENTER, False, 0)
         self.Add(cards, self.Card("swat"), 0.0, 0.0, 20.0, 0.0, 0, False, 0)
         self.Add(cards, self.Card("suspect"), 20.0, 0.0, 0.0, 0.0, 0, False, 0)
         bar = self.HBox()
-        self.Add(teams, bar, 0.0, 28.0, 0.0, 0.0, ALIGN_CENTER, False, 0)
-        self.BotsButton = self.MakeButton("", STYLE_DARK, "bots", 18)
-        self.AccuracyButton = self.MakeButton("", STYLE_DARK, "accuracy", 18)
-        self.MinutesButton = self.MakeButton("", STYLE_DARK, "minutes", 18)
-        self.RoundsButton = self.MakeButton("", STYLE_DARK, "rounds", 18)
-        self.SwapButton = self.MakeButton("", STYLE_DARK, "swap", 18)
-        self.RulesButton = self.MakeButton("", STYLE_DARK, "rules", 18)
-        self.Add(bar, self.BotsButton, 0.0, 0.0, 0.0, 0.0, 0, False, 0)
-        self.Add(bar, self.AccuracyButton, 12.0, 0.0, 0.0, 0.0, 0, False, 0)
-        self.Add(bar, self.MinutesButton, 12.0, 0.0, 0.0, 0.0, 0, False, 0)
-        self.Add(bar, self.RoundsButton, 12.0, 0.0, 0.0, 0.0, 0, False, 0)
-        self.Add(bar, self.SwapButton, 12.0, 0.0, 0.0, 0.0, 0, False, 0)
-        self.Add(bar, self.RulesButton, 12.0, 0.0, 0.0, 0.0, 0, False, 0)
+        self.Add(teams, bar, 0.0, 26.0, 0.0, 0.0, ALIGN_CENTER, False, 0)
+        self.AccuracyButton = self.MakeButton("", STYLE_DARK, "accuracy", 17)
+        self.MinutesButton = self.MakeButton("", STYLE_DARK, "minutes", 17)
+        self.RoundsButton = self.MakeButton("", STYLE_DARK, "rounds", 17)
+        self.SwapButton = self.MakeButton("", STYLE_DARK, "swap", 17)
+        self.RulesButton = self.MakeButton("", STYLE_DARK, "rules", 17)
+        self.LangButton = self.MakeButton("", STYLE_DARK, "lang", 17)
+        self.Add(bar, self.AccuracyButton, 0.0, 0.0, 0.0, 0.0, 0, False, 0)
+        self.Add(bar, self.MinutesButton, 10.0, 0.0, 0.0, 0.0, 0, False, 0)
+        self.Add(bar, self.RoundsButton, 10.0, 0.0, 0.0, 0.0, 0, False, 0)
+        self.Add(bar, self.SwapButton, 10.0, 0.0, 0.0, 0.0, 0, False, 0)
+        self.Add(bar, self.RulesButton, 10.0, 0.0, 0.0, 0.0, 0, False, 0)
+        self.Add(bar, self.LangButton, 10.0, 0.0, 0.0, 0.0, 0, False, 0)
         actions = self.HBox()
         self.Add(teams, actions, 0.0, 14.0, 0.0, 0.0, ALIGN_CENTER, False, 0)
-        self.Add(actions, self.MakeButton("АВТОВЫБОР", STYLE_DARK, "auto", 18), 0.0, 0.0, 0.0, 0.0, 0, False, ALIGN_CENTER)
-        self.ReadyButton = self.MakeButton("ГОТОВ", STYLE_YELLOW, "ready", 24)
+        self.Add(actions, self.MakeButton(self.L("АВТОВЫБОР", "AUTO PICK"), STYLE_DARK, "auto", 18), 0.0, 0.0, 0.0, 0.0, 0, False, ALIGN_CENTER)
+        self.ReadyButton = self.MakeButton(self.L("ГОТОВ", "READY"), STYLE_YELLOW, "ready", 24)
         self.Add(actions, self.Sized(self.ReadyButton, 260.0, 0.0), 24.0, 0.0, 0.0, 0.0, 0, False, 0)
-        self.Add(teams, self.MakeText("Остальные игроки выбирают сторону в чате: !swat или !suspect · список команд: !teams", 15,
-                                      self.Col(0.16, 0.17, 0.19, 1.0)), 0.0, 18.0, 0.0, 0.0, ALIGN_CENTER, False, 0)
+        self.Add(teams, self.MakeText(self.L("Остальные игроки выбирают сторону в чате: !swat или !suspect — список команд: !teams",
+                                             "Other players pick a side in chat: !swat or !suspect — the teams: !teams"), 15, grey),
+                 0.0, 18.0, 0.0, 0.0, ALIGN_CENTER, False, 0)
         self.TeamsBox = teams
 
         result = self.VBox()
         self.Add(content, result, 0.0, 0.0, 0.0, 0.0, ALIGN_CENTER, False, 0)
         self.ResTop = self.MakeText("", 22, grey)
         self.Add(result, self.ResTop, 0.0, 0.0, 0.0, 0.0, ALIGN_CENTER, False, 0)
-        self.ResWinner = self.MakeText("", 68, white)
+        self.ResWinner = self.MakeText("", 64, white)
         self.Add(result, self.ResWinner, 0.0, 4.0, 0.0, 0.0, ALIGN_CENTER, False, 0)
         self.ResReason = self.MakeText("", 22, grey)
-        self.Add(result, self.ResReason, 0.0, 0.0, 0.0, 34.0, ALIGN_CENTER, False, 0)
+        self.Add(result, self.ResReason, 0.0, 0.0, 0.0, 30.0, ALIGN_CENTER, False, 0)
         scores = self.HBox()
         self.Add(result, scores, 0.0, 0.0, 0.0, 0.0, ALIGN_CENTER, False, 0)
         self.Add(scores, self.ScoreBox(True), 0.0, 0.0, 0.0, 0.0, 0, False, ALIGN_CENTER)
         self.Add(scores, self.MakeText(":", 64, grey), 22.0, 0.0, 22.0, 0.0, 0, False, ALIGN_CENTER)
         self.Add(scores, self.ScoreBox(False), 0.0, 0.0, 0.0, 0.0, 0, False, ALIGN_CENTER)
-        self.ResNotice = self.MakeText("", 26, self.Col(1.0, 0.62, 0.05, 1.0))
-        self.Add(result, self.ResNotice, 0.0, 34.0, 0.0, 0.0, ALIGN_CENTER, False, 0)
-        self.ResCountdown = self.MakeText("", 22, white)
-        self.Add(result, self.ResCountdown, 0.0, 12.0, 0.0, 0.0, ALIGN_CENTER, False, 0)
+        table = self.Fill(self.Col(0.006, 0.007, 0.009, 0.9), 24.0, 14.0, 24.0, 14.0)
+        self.Add(result, table, 0.0, 26.0, 0.0, 0.0, ALIGN_CENTER, False, 0)
+        rows = self.VBox()
+        table.SetContent(rows)
+        self.Add(rows, self.StatRow(self.L("ИГРОК", "PLAYER"), self.L("УБИЙСТВА", "KILLS"), self.L("СМЕРТИ", "DEATHS"), grey), 0.0, 0.0, 0.0, 6.0, 0, False, 0)
+        for i in range(STAT_ROWS):
+            row = self.StatRow("", "", "", white)
+            self.Add(rows, row, 0.0, 2.0, 0.0, 2.0, 0, False, 0)
+            self.StatRows.append(row)
+        self.ResMvp = self.MakeText("", 22, self.Col(1.0, 0.75, 0.2, 1.0))
+        self.Add(result, self.ResMvp, 0.0, 16.0, 0.0, 0.0, ALIGN_CENTER, False, 0)
+        self.ResNotice = self.MakeText("", 24, self.Col(1.0, 0.62, 0.05, 1.0))
+        self.Add(result, self.ResNotice, 0.0, 22.0, 0.0, 0.0, ALIGN_CENTER, False, 0)
+        self.ResCountdown = self.MakeText("", 20, white)
+        self.Add(result, self.ResCountdown, 0.0, 10.0, 0.0, 0.0, ALIGN_CENTER, False, 0)
         buttons = self.HBox()
-        self.Add(result, buttons, 0.0, 30.0, 0.0, 0.0, ALIGN_CENTER, False, 0)
-        start_now = self.Sized(self.MakeButton("НАЧАТЬ СЕЙЧАС", STYLE_YELLOW, "startnow", 22), 300.0, 0.0)
-        teams_button = self.MakeButton("КОМАНДЫ И НАСТРОЙКИ", STYLE_DARK, "teams", 18)
-        reset = self.MakeButton("СБРОСИТЬ МАТЧ", STYLE_DARK, "newmatch", 18)
-        new_match = self.Sized(self.MakeButton("НОВЫЙ МАТЧ", STYLE_YELLOW, "newmatch", 24), 320.0, 0.0)
+        self.Add(result, buttons, 0.0, 26.0, 0.0, 0.0, ALIGN_CENTER, False, 0)
+        start_now = self.Sized(self.MakeButton(self.L("НАЧАТЬ СЕЙЧАС", "START NOW"), STYLE_YELLOW, "startnow", 22), 300.0, 0.0)
+        teams_button = self.MakeButton(self.L("КОМАНДЫ И НАСТРОЙКИ", "TEAMS AND SETTINGS"), STYLE_DARK, "teams", 18)
+        reset = self.MakeButton(self.L("СБРОСИТЬ МАТЧ", "RESET THE MATCH"), STYLE_DARK, "newmatch", 18)
+        new_match = self.Sized(self.MakeButton(self.L("НОВЫЙ МАТЧ", "NEW MATCH"), STYLE_YELLOW, "newmatch", 24), 320.0, 0.0)
         self.Add(buttons, start_now, 0.0, 0.0, 0.0, 0.0, 0, False, ALIGN_CENTER)
         self.Add(buttons, teams_button, 16.0, 0.0, 0.0, 0.0, 0, False, ALIGN_CENTER)
         self.Add(buttons, reset, 16.0, 0.0, 0.0, 0.0, 0, False, ALIGN_CENTER)
@@ -1741,34 +2238,46 @@ class PvPDirector(Actor):
 
     def AccuracyName(self) -> str:
         if self.State.BotAccuracy >= 2.5:
-            return "НИЗКАЯ"
+            return self.L("НИЗКАЯ", "LOW")
         if self.State.BotAccuracy >= 1.5:
-            return "СРЕДНЯЯ"
-        return "ВЫСОКАЯ"
+            return self.L("СРЕДНЯЯ", "MEDIUM")
+        return self.L("ВЫСОКАЯ", "HIGH")
 
-    def FillCard(self, swat: bool, chosen: bool):
-        """The rows collected in RowTexts/RowColors, then free slots up to five."""
+    def FillCard(self, swat: bool, chosen: bool, bots: int):
+        """The rows collected in RowTexts/RowColors; the SWAT card then shows its bot slots up to five, the
+        suspects' card free rows."""
         rows = self.SwatRows if swat else self.SuspectRows
         texts = self.SwatTexts if swat else self.SuspectTexts
         header = self.SwatHeader if swat else self.SuspectHeader
-        if swat:
-            header.SetBrushColor(self.Col(0.07, 0.19, 0.5, 1.0) if chosen else self.Col(0.04, 0.1, 0.27, 1.0))
-        else:
-            header.SetBrushColor(self.Col(0.6, 0.24, 0.03, 1.0) if chosen else self.Col(0.36, 0.13, 0.015, 1.0))
+        header.SetBrushColor(self.Col(0.05, 0.055, 0.065, 1.0) if chosen else self.Col(0.02, 0.022, 0.026, 1.0))
         for i in range(MAX_ROWS):
             if i < len(self.RowTexts):
                 texts[i].SetText(Text(self.RowTexts[i]))
                 self.Paint(texts[i], self.RowColors[i])
                 self.Show(rows[i], True)
-            elif i < SLOTS:
-                texts[i].SetText(Text("свободно"))
-                self.Paint(texts[i], self.Col(0.16, 0.17, 0.19, 1.0))
+            elif i < SLOTS and not swat:
+                texts[i].SetText(Text(self.L("свободно", "free")))
+                self.Paint(texts[i], self.Col(0.3, 0.31, 0.33, 1.0))
                 self.Show(rows[i], True)
             else:
                 self.Show(rows[i], False)
+        if swat:
+            names = self.BotNames()
+            for i in range(SLOTS):
+                button = self.SlotButtons[i]
+                if i < SLOTS - len(self.RowTexts):
+                    if i < bots:
+                        self.Label(button, self.L("БОТ  ", "BOT  ") + ToUpper(names[i]) + self.L("  —  убрать", "  —  remove"))
+                    elif bots < MAX_BOTS:
+                        self.Label(button, self.L("свободно  —  добавить бота", "free  —  add a bot"))
+                    else:
+                        self.Label(button, self.L("свободно", "free"))
+                    self.Show(button, True)
+                else:
+                    self.Show(button, False)
         status = self.SwatStatus if swat else self.SuspectStatus
-        status.SetText(Text("ВЫ В ЭТОЙ КОМАНДЕ" if chosen else ""))
-        self.Label(self.SwatJoin if swat else self.SuspectJoin, "ВЫ ЗДЕСЬ" if chosen else "ВСТУПИТЬ")
+        status.SetText(Text(self.L("ВЫ В ЭТОЙ КОМАНДЕ", "YOU ARE ON THIS TEAM") if chosen else ""))
+        self.Label(self.SwatJoin if swat else self.SuspectJoin, self.L("ВЫ ЗДЕСЬ", "YOU ARE HERE") if chosen else self.L("ВСТУПИТЬ", "JOIN"))
 
     def ShowMenu(self, players: List[ReadyOrNotPlayerController], host: ReadyOrNotPlayerController, now: float):
         st = self.State
@@ -1792,10 +2301,13 @@ class PvPDirector(Actor):
             return
         host_team = self.TeamOf(host)
         if st.Round > 1:
-            self.Subtitle.SetText(Text(f"Раунд {st.Round} · {self.ScoreLine()} · матч до {st.RoundsToWin} побед"))
+            self.Subtitle.SetText(Text(self.L(f"Раунд {st.Round} — {self.ScoreLine()} — матч до {st.RoundsToWin} побед",
+                                              f"Round {st.Round} — {self.ScoreLine()} — first to {st.RoundsToWin} wins")))
         else:
-            self.Subtitle.SetText(Text(f"PvP · раунд {st.Minutes} мин · убитый подозреваемый вселяется в живого ИИ-подозреваемого"))
+            self.Subtitle.SetText(Text(self.L(f"Раунд {st.Minutes} мин — убитый подозреваемый вселяется в живого ИИ-подозреваемого — ",
+                                              f"{st.Minutes} min rounds — a dead suspect takes over a living AI suspect — ") + self.RulesText()))
         white = self.Col(1.0, 1.0, 1.0, 1.0)
+        bots = self.BotCount(players)
         for team in [SWAT, SUSPECT]:
             self.RowTexts.clear()
             self.RowColors.clear()
@@ -1804,60 +2316,76 @@ class PvPDirector(Actor):
                 if (self.TeamOf(pc) == SUSPECT) == (team == SUSPECT):
                     count += 1
                     ready = self.HostConfirmed if self.IsHost(pc) else self.StateOf(pc).bReady
-                    self.RowTexts.append(self.NameOf(pc) + (" · хост" if self.IsHost(pc) else "") + (" · готов" if ready else ""))
+                    notes = self.L("хост", "host") if self.IsHost(pc) else ""
+                    if ready:
+                        notes = notes + (", " if notes != "" else "") + self.L("готов", "ready")
+                    self.RowTexts.append(self.NameOf(pc) + (" (" + notes + ")" if notes != "" else ""))
                     self.RowColors.append(white)
             if team == SWAT:
-                if st.Bots:
-                    for name in ["King", "Swan", "Prescott", "Eli"]:
-                        self.RowTexts.append("БОТ  " + name)
-                        self.RowColors.append(self.Col(0.22, 0.32, 0.55, 1.0))
-                self.SwatCount.SetText(Text(f"{count} / {SLOTS}"))
-                self.FillCard(True, host_team != SUSPECT)
+                self.SwatCount.SetText(Text(f"{count + bots} / {SLOTS}"))
+                self.FillCard(True, host_team != SUSPECT, bots)
             else:
                 ai = len(self.LivingAiSuspects())
-                self.RowTexts.append(f"ИИ-подозреваемые · {ai}" if ai > 0 else "ИИ-подозреваемые миссии")
-                self.RowColors.append(self.Col(0.62, 0.32, 0.1, 1.0))
+                self.RowTexts.append(self.L(f"ИИ-подозреваемые: {ai}", f"AI suspects: {ai}") if ai > 0 else self.L("ИИ-подозреваемые миссии", "the mission's AI suspects"))
+                self.RowColors.append(self.Col(0.62, 0.36, 0.18, 1.0))
                 self.SuspectCount.SetText(Text(f"{count} / {SLOTS}"))
-                self.FillCard(False, host_team == SUSPECT)
-        self.Label(self.BotsButton, "БОТЫ SWAT: ВКЛ" if st.Bots else "БОТЫ SWAT: ВЫКЛ")
-        self.Label(self.AccuracyButton, "МЕТКОСТЬ: " + self.AccuracyName())
-        self.Label(self.MinutesButton, f"РАУНД: {st.Minutes} МИН")
-        self.Label(self.RoundsButton, "МАТЧ: 1 РАУНД" if st.RoundsToWin == 1 else f"МАТЧ: ДО {st.RoundsToWin} ПОБЕД")
-        self.Label(self.SwapButton, "СМЕНА СТОРОН: ВКЛ" if st.Swap else "СМЕНА СТОРОН: ВЫКЛ")
-        self.Label(self.RulesButton, "ПРАВИЛА: УРАВНЕННЫЕ" if st.Rules == RULES_BALANCED else "ПРАВИЛА: ВАНИЛЬНЫЕ")
-        self.Label(self.ReadyButton, "ЖДЁМ ОСТАЛЬНЫХ" if self.HostConfirmed else "ГОТОВ")
+                self.FillCard(False, host_team == SUSPECT, 0)
+        self.Label(self.AccuracyButton, self.L("МЕТКОСТЬ БОТОВ: ", "BOT ACCURACY: ") + self.AccuracyName())
+        self.Label(self.MinutesButton, self.L(f"РАУНД: {st.Minutes} МИН", f"ROUND: {st.Minutes} MIN"))
+        self.Label(self.RoundsButton, self.L("МАТЧ: 1 РАУНД", "MATCH: 1 ROUND") if st.RoundsToWin == 1 else self.L(f"МАТЧ: ДО {st.RoundsToWin} ПОБЕД", f"MATCH: FIRST TO {st.RoundsToWin}"))
+        self.Label(self.SwapButton, self.L("СМЕНА СТОРОН: ВКЛ", "SIDE SWAP: ON") if st.Swap else self.L("СМЕНА СТОРОН: ВЫКЛ", "SIDE SWAP: OFF"))
+        self.Label(self.RulesButton, self.L("ПРАВИЛА: УРАВНЕННЫЕ", "RULES: BALANCED") if st.Rules == RULES_BALANCED else self.L("ПРАВИЛА: ВАНИЛЬНЫЕ", "RULES: VANILLA"))
+        self.Label(self.LangButton, "ЯЗЫК: РУССКИЙ" if self.Russian else "LANGUAGE: ENGLISH")
+        self.Label(self.ReadyButton, self.L("ЖДЁМ ОСТАЛЬНЫХ", "WAITING FOR OTHERS") if self.HostConfirmed else self.L("ГОТОВ", "READY"))
 
     def FillResult(self, final: bool, host: ReadyOrNotPlayerController, now: float):
         st = self.State
         swat_won = st.ResultSwatWon
-        self.ResTop.SetText(Text("МАТЧ ОКОНЧЕН" if final else f"РАУНД {st.ResultRound}"))
-        self.ResWinner.SetText(Text("ПОБЕДА SWAT" if swat_won else "ПОБЕДА ПОДОЗРЕВАЕМЫХ"))
-        self.Paint(self.ResWinner, self.Col(0.3, 0.5, 1.0, 1.0) if swat_won else self.Col(1.0, 0.5, 0.12, 1.0))
-        self.ResReason.SetText(Text(f"решающий раунд {st.ResultRound}: {st.ResultReason}" if final else st.ResultReason))
+        self.ResTop.SetText(Text(self.L("МАТЧ ОКОНЧЕН", "MATCH OVER") if final else self.L(f"РАУНД {st.ResultRound}", f"ROUND {st.ResultRound}")))
+        self.ResWinner.SetText(Text(self.L("ПОБЕДА SWAT", "SWAT WIN") if swat_won else self.L("ПОБЕДА ПОДОЗРЕВАЕМЫХ", "SUSPECTS WIN")))
+        self.Paint(self.ResWinner, self.TeamColor(swat_won))
+        self.ResReason.SetText(Text(self.L(f"решающий раунд {st.ResultRound}: {st.ResultReason}", f"deciding round {st.ResultRound}: {st.ResultReason}") if final else st.ResultReason))
         self.ResSwatNumber.SetText(Text(str(st.ResultSwatScore)))
         self.ResSuspectNumber.SetText(Text(str(st.ResultSuspectScore)))
-        self.ResSwatBox.SetBrushColor(self.Col(0.07, 0.19, 0.5, 1.0) if swat_won else self.Col(0.04, 0.1, 0.27, 1.0))
-        self.ResSuspectBox.SetBrushColor(self.Col(0.36, 0.13, 0.015, 1.0) if swat_won else self.Col(0.6, 0.24, 0.03, 1.0))
+        self.ResSwatBox.SetBrushColor(self.Col(0.05, 0.055, 0.065, 0.96) if swat_won else self.Col(0.02, 0.022, 0.026, 0.96))
+        self.ResSuspectBox.SetBrushColor(self.Col(0.02, 0.022, 0.026, 0.96) if swat_won else self.Col(0.05, 0.055, 0.065, 0.96))
+        # the table (index 0 of the text lists is the title row)
+        for i in range(STAT_ROWS):
+            if i < len(st.ResultNames):
+                self.StatNames[i + 1].SetText(Text(st.ResultNames[i]))
+                self.Paint(self.StatNames[i + 1], self.TeamColor(st.ResultTeams[i] != SUSPECT))
+                self.StatKills[i + 1].SetText(Text(str(st.ResultKills[i])))
+                self.StatDeaths[i + 1].SetText(Text(str(st.ResultDeaths[i])))
+                self.Show(self.StatRows[i], True)
+            else:
+                self.Show(self.StatRows[i], False)
+        if st.ResultMvp != "":
+            self.ResMvp.SetText(Text(self.L("ЛУЧШИЙ ИГРОК ", "BEST PLAYER OF THE ") + (self.L("МАТЧА", "MATCH") if final else self.L("РАУНДА", "ROUND")) + ":  " + st.ResultMvp))
+        else:
+            self.ResMvp.SetText(Text(""))
         for button in self.RoundButtons:
             self.Show(button, not final)
         self.Show(self.NewMatchButton, final)
         host_team = self.TeamName(self.TeamOf(host))
         if final:
-            self.ResNotice.SetText(Text("Победители: " + st.ResultWinners))
-            self.ResCountdown.SetText(Text(f"Матч до {st.RoundsToWin} побед. «Новый матч» — снова выбор команд на этой же карте"))
+            self.ResNotice.SetText(Text(self.L("Победители: ", "Winners: ") + st.ResultWinners))
+            self.ResCountdown.SetText(Text(self.L(f"Матч до {st.RoundsToWin} побед. «Новый матч» — снова выбор команд на этой же карте",
+                                                  f"First to {st.RoundsToWin} wins. \"New match\" goes back to the team choice on this map")))
             return
         if st.ResultSwapped:
-            self.ResNotice.SetText(Text(f"СМЕНА СТОРОН · теперь вы за {host_team} · {self.ScoreLine()}"))
+            self.ResNotice.SetText(Text(self.L(f"СМЕНА СТОРОН — теперь вы за {host_team} — {self.ScoreLine()}",
+                                               f"SIDES SWAPPED — you now play {host_team} — {self.ScoreLine()}")))
         else:
-            self.ResNotice.SetText(Text(f"Следующий раунд: вы за {host_team} · матч до {st.RoundsToWin} побед"))
+            self.ResNotice.SetText(Text(self.L(f"Следующий раунд: вы за {host_team} — матч до {st.RoundsToWin} побед",
+                                               f"Next round: you play {host_team} — first to {st.RoundsToWin} wins")))
         gs = cast(GetGameState(), ReadyOrNotGameState)
         if gs and gs.IsEveryoneReady():
             seconds = max(0, int(gs.TimeTillGameStartCountdown + 0.99))
-            self.ResCountdown.SetText(Text(f"Раунд {st.Round} начнётся через {seconds} с"))
+            self.ResCountdown.SetText(Text(self.L(f"Раунд {st.Round} начнётся через {seconds} с", f"Round {st.Round} starts in {seconds} s")))
         else:
             start = self.BriefedAt if self.BriefedAt >= 0.0 else now
             seconds = max(0, int(start + READY_AFTER - now + 0.99))
-            self.ResCountdown.SetText(Text(f"Раунд {st.Round} · автостарт через {seconds} с"))
+            self.ResCountdown.SetText(Text(self.L(f"Раунд {st.Round} — автостарт через {seconds} с", f"Round {st.Round} — starts by itself in {seconds} s")))
 
     def OnMenuClick(self, CallingButton: W_StandardButton_C):
         st = self.State
@@ -1870,10 +2398,10 @@ class PvPDirector(Actor):
         if action == "swat" or action == "suspect":
             team = SUSPECT if action == "suspect" else SWAT
             if self.TeamOf(host) != team:
-                self.Say(name + " → " + self.TeamName(team))
+                self.Say(name + " — " + self.TeamName(team))
             st.Teams[name] = team
         elif action == "auto":
-            # the side with fewer players; on a tie the suspects (SWAT have the bots when they are on)
+            # the side with fewer players; on a tie the suspects (SWAT have the bots when there are any)
             swat = 0
             suspects = 0
             for pc in players:
@@ -1882,14 +2410,10 @@ class PvPDirector(Actor):
                         suspects += 1
                     else:
                         swat += 1
-            team = SUSPECT if suspects < swat or (suspects == swat and st.Bots) else SWAT
+            team = SUSPECT if suspects < swat or (suspects == swat and st.BotSlots > 0) else SWAT
             if self.TeamOf(host) != team:
-                self.Say(name + " → " + self.TeamName(team))
+                self.Say(name + " — " + self.TeamName(team))
             st.Teams[name] = team
-        elif action == "bots":
-            st.Bots = not st.Bots
-            self.SaveSettings()
-            self.Say("PvP: ИИ-отряд SWAT включён" if st.Bots else "PvP: ИИ-отряд SWAT выключен")
         elif action == "accuracy":
             if st.BotAccuracy >= 2.5:
                 st.BotAccuracy = 2.0
@@ -1912,7 +2436,13 @@ class PvPDirector(Actor):
         elif action == "rules":
             st.Rules = RULES_VANILLA if st.Rules == RULES_BALANCED else RULES_BALANCED
             self.SaveSettings()
-            self.Say("PvP: " + self.RulesText())
+            self.Remote("PvP: " + self.RulesText())
+        elif action == "lang":
+            st.Lang = "en" if self.Russian else "ru"
+            self.Russian = st.Lang == "ru"
+            self.SaveSettings()
+            # built again in the other language
+            self.Page.RemoveFromParent()
         elif action == "startnow":
             self.ReadyEveryone(players, self.Now())
         elif action == "teams":
@@ -1924,23 +2454,210 @@ class PvPDirector(Actor):
             self.NewMatch()
             self.HostConfirmed = False
             self.MenuHidden = False
-            self.Say(f"PvP: новый матч до {st.RoundsToWin} побед — выбор команд")
+            self.Remote(self.L(f"PvP: новый матч до {st.RoundsToWin} побед — выбор команд", f"PvP: a new match, first to {st.RoundsToWin} wins — pick your teams"))
         elif action == "ready":
             if not self.StateOf(host).bReady and self.Screen:
                 self.Screen.ToggleReady()
             if not self.HostConfirmed:
                 self.HostConfirmed = True
                 self.MenuHidden = True
-                self.Say(name + " готов: " + self.TeamName(self.TeamOf(host)))
+                self.Say(name + self.L(" готов: ", " is ready: ") + self.TeamName(self.TeamOf(host)))
+        else:
+            # a SWAT slot: a bot taken away or added
+            bots = self.BotCount(players)
+            for i in range(SLOTS):
+                if action == "slot" + str(i):
+                    if i < bots:
+                        st.BotSlots = bots - 1
+                    elif bots < MAX_BOTS:
+                        st.BotSlots = bots + 1
+                    self.SaveSettings()
         self.ShowMenu(players, host, self.Now())
 
     def RulesText(self) -> str:
         if self.State.Rules == RULES_BALANCED:
-            return "Правила уравненные: у подозреваемых винтовки, ИИ-отряд SWAT в кевларе."
-        return "Правила ванильные: оружие и броня как у ИИ миссии."
+            return self.L("правила уравненные: у подозреваемых винтовки, ИИ-отряд SWAT в кевларе",
+                          "balanced rules: rifles for the suspects, Kevlar for the AI SWAT squad")
+        return self.L("правила ванильные: оружие и броня как у ИИ миссии", "vanilla rules: guns and armour as the mission's AI have them")
 
     def NextStep(self, steps: List[int], current: int) -> int:
         for i in range(len(steps)):
             if steps[i] == current:
                 return steps[(i + 1) % len(steps)]
         return steps[0]
+
+    # ================================================================ the scoreboard on Tab (every machine with the pak)
+
+    def HudTick(self):
+        """While Tab is held in a PvP round the scoreboard shows over the mission journal; it is built once in
+        a world and filled again every half second while it shows (BoardForced shows it without the key)."""
+        pc = cast(GetPlayerController(0), ReadyOrNotPlayerController)
+        if not pc or not cast(GetGameState(), ReadyOrNotGameState):
+            return
+        if self.Server:
+            self.ShowBanners()
+        want = self.BoardForced
+        if not want and pc.IsInputKeyDown(Key(KeyName="Tab")):
+            want = self.InMatch()
+        if want:
+            if not self.Board:
+                self.BuildBoard(pc)
+            if not self.Board:
+                return
+            now = GetTimeSeconds()
+            if not self.BoardShown or now >= self.BoardAt:
+                self.BoardAt = now + 0.5
+                self.FillBoard(pc)
+            if not self.BoardShown:
+                self.BoardShown = True
+                self.Board.SetVisibility(SELF_HIT_TEST_INVISIBLE)
+        elif self.BoardShown:
+            self.BoardShown = False
+            self.Board.SetVisibility(COLLAPSED)
+
+    def InMatch(self) -> bool:
+        """A PvP round is on: the host knows it; a client sees the round time the host publishes or a player
+        on the suspects' team."""
+        if self.Server:
+            return self.State.Active and (self.State.Phase == "live" or self.State.Phase == "roundover")
+        gs = cast(GetGameState(), ReadyOrNotGameState)
+        if gs.RoundTimeRemaining > 0.0:
+            return True
+        for ps in gs.PlayerArray:
+            state = cast(ps, ReadyOrNotPlayerState)
+            if state and state.Team == SUSPECT:
+                return True
+        return False
+
+    def BoardText(self, value: str, size: int, color: LinearColor) -> TextBlock:
+        return self.TextIn(self.Board.WidgetTree, value, size, False, color)
+
+    def BuildBoard(self, pc: ReadyOrNotPlayerController):
+        """The game's scoreboard panel (W_Scoreboard: the blur and the frame) with its content swapped for the
+        mode's: a title line, the game's own column titles, a section per team of the game's player lines."""
+        self.LoadFonts(pc)
+        board = cast(Create(W_Scoreboard_C, pc), W_Scoreboard_C)
+        if not board:
+            return
+        root = cast(board.WidgetTree.RootWidget, CanvasPanel)
+        if not root:
+            return
+        overlay = cast(root.GetChildAt(0), Overlay)
+        if not overlay:
+            return
+        fill = cast(overlay.GetChildAt(3), W_ScoreboardFill_C)
+        if not fill:
+            return
+        # the game's column titles (their texts are written by the scoreboard's own refresh, which this one
+        # never runs); the columns a co-op round has no use for go
+        header = fill.Name.GetParent()
+        for column in [fill.Incapacitations, fill.Arrests, fill.TimesArrested, fill.Damage, fill.Score]:
+            column.SetVisibility(COLLAPSED)
+        fill.Name.SetText(Text(self.L("ИМЯ", "NAME")))
+        fill.Kills.SetText(Text(self.L("УБИЙСТВА", "KILLS")))
+        fill.Deaths.SetText(Text(self.L("СМЕРТИ", "DEATHS")))
+        fill.Status.SetText(Text(self.L("СТАТУС", "STATUS")))
+        fill.Ping.SetText(Text(self.L("ПИНГ", "PING")))
+        overlay.RemoveChildAt(3)
+        # the spacer gives the panel its fixed size: without it the panel follows its content
+        overlay.GetChildAt(2).SetVisibility(COLLAPSED)
+        panel = cast(overlay.Slot, CanvasPanelSlot)
+        if panel:
+            panel.SetAutoSize(True)
+        self.Board = board
+        box = cast(SpawnObject(VerticalBox, board.WidgetTree), VerticalBox)
+        slot = overlay.AddChildToOverlay(box)
+        slot.SetPadding(Margin(Left=40.0, top=26.0, Right=40.0, bottom=30.0))
+        self.BoardTitle = self.BoardText("", 22, self.Col(1.0, 1.0, 1.0, 1.0))
+        self.Add(box, self.BoardTitle, 0.0, 0.0, 0.0, 14.0, ALIGN_CENTER, False, 0)
+        header.RemoveFromParent()
+        self.Add(box, header, 0.0, 0.0, 0.0, 4.0, 0, False, 0)
+        self.Add(box, self.BoardText("SWAT", 18, self.TeamColor(True)), 0.0, 10.0, 0.0, 4.0, 0, False, 0)
+        self.BoardSwat = cast(SpawnObject(VerticalBox, board.WidgetTree), VerticalBox)
+        self.Add(box, self.BoardSwat, 0.0, 0.0, 0.0, 0.0, 0, False, 0)
+        self.Add(box, self.BoardText(self.L("ПОДОЗРЕВАЕМЫЕ", "SUSPECTS"), 18, self.TeamColor(False)), 0.0, 16.0, 0.0, 4.0, 0, False, 0)
+        self.BoardSuspects = cast(SpawnObject(VerticalBox, board.WidgetTree), VerticalBox)
+        self.Add(box, self.BoardSuspects, 0.0, 0.0, 0.0, 0.0, 0, False, 0)
+        board.AddToViewport(60)
+        board.SetVisibility(COLLAPSED)
+        self.BoardKey = ""
+
+    def BoardBots(self) -> List[SWATCharacter]:
+        """The AI officers in this world (the reserve ones under the map left out)."""
+        result: List[SWATCharacter] = []
+        for actor in GetAllActorsOfClass(SWATCharacter):
+            bot = cast(actor, SWATCharacter)
+            if bot and not isinstance(actor, TrailerSWATCharacter):
+                result.append(bot)
+        return result
+
+    def TrimLine(self, line: W_Scoreboard_Line_C):
+        line.bHideReadyCheckbox = True
+        for column in [line.Incapacitations, line.Arrests, line.TimesArrested, line.Damage, line.Score]:
+            column.SetVisibility(COLLAPSED)
+        line.CheckboxImage.SetVisibility(COLLAPSED)
+
+    def InfoLine(self, pc: ReadyOrNotPlayerController, name: str, status: str) -> W_Scoreboard_Line_C:
+        """A line in the game's look for what has no PlayerState (an AI officer, the AI suspects): the name and
+        the status written in, the rest blank."""
+        line = cast(Create(W_Scoreboard_Line_C, pc), W_Scoreboard_Line_C)
+        self.TrimLine(line)
+        line.Name.SetText(Text(name))
+        # the numbers come from a PlayerState, and without one the line shows its own choice of columns: all
+        # of them transparent, keeping their place
+        for column in [line.Kills, line.Incapacitations, line.Arrests, line.TimesArrested, line.Deaths, line.Damage, line.Score]:
+            column.SetRenderOpacity(0.0)
+        line.Status.SetText(Text(status))
+        line.Ping.SetText(Text(""))
+        return line
+
+    def FillBoard(self, pc: ReadyOrNotPlayerController):
+        """The title (round, score, time left) every time; the lines only when somebody joined, changed sides or
+        an officer fell (a player's line follows its PlayerState by itself)."""
+        gs = cast(GetGameState(), ReadyOrNotGameState)
+        swat_score = gs.BlueTeamWins
+        suspect_score = gs.RedTeamWins
+        number = swat_score + suspect_score + 1
+        left = gs.RoundTimeRemaining
+        if self.Server:
+            st = self.State
+            swat_score = st.ScoreSwat
+            suspect_score = st.ScoreSuspects
+            number = st.Round
+            left = max(self.EndsAt - self.Now(), 0.0) if st.Phase == "live" else 0.0
+        seconds = int(left)
+        minutes = int(left / 60.0)
+        self.BoardTitle.SetText(Text(self.L(f"РАУНД {number}", f"ROUND {number}") + f"     SWAT  {swat_score} : {suspect_score}  "
+                                     + self.L("ПОДОЗРЕВАЕМЫЕ", "SUSPECTS") + f"     {minutes}:{seconds % 60:02d}"))
+        states: List[ReadyOrNotPlayerState] = []
+        key = ""
+        for ps in gs.PlayerArray:
+            state = cast(ps, ReadyOrNotPlayerState)
+            if state:
+                states.append(state)
+                key = key + state.GetPlayerName() + str(int(state.Team)) + ";"
+        bots = self.BoardBots()
+        for bot in bots:
+            key = key + self.CallSign(bot) + ("-" if self.IsDown(bot) else "+")
+        ai = 0
+        for actor in GetAllActorsOfClass(SuspectCharacter):
+            if not self.IsDown(cast(actor, SuspectCharacter)):
+                ai += 1
+        key = key + "ai" + str(ai)
+        if key == self.BoardKey:
+            return
+        self.BoardKey = key
+        self.BoardSwat.ClearChildren()
+        self.BoardSuspects.ClearChildren()
+        for state in states:
+            line = cast(Create(W_Scoreboard_Line_C, pc), W_Scoreboard_Line_C)
+            line.PlayerState = state
+            self.TrimLine(line)
+            if state.Team == SUSPECT:
+                self.BoardSuspects.AddChild(line)
+            else:
+                self.BoardSwat.AddChild(line)
+        for bot in bots:
+            status = self.L("ВЫБЫЛ", "DOWN") if self.IsDown(bot) else self.L("В СТРОЮ", "ACTIVE")
+            self.BoardSwat.AddChild(self.InfoLine(pc, self.CallSign(bot) + self.L("  (бот)", "  (bot)"), status))
+        self.BoardSuspects.AddChild(self.InfoLine(pc, self.L("ИИ-ПОДОЗРЕВАЕМЫЕ", "AI SUSPECTS"), self.L(f"ОСТАЛОСЬ {ai}", f"{ai} LEFT")))

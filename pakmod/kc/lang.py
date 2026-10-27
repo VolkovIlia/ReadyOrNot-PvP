@@ -1020,8 +1020,8 @@ class FunctionCompiler:
 
     def b_int(self, node, want):
         value = self.expr(node.args[0])
-        if value.type.kind == "double":
-            return self.math("FTrunc", value)
+        if value.type.kind in ("double", "float"):
+            return self.math("FTrunc", self.coerce(value, T.DOUBLE, node))
         if value.type.kind == "str":
             return self.call_game("/Script/Engine.KismetStringLibrary:Conv_StringToInt", None, [value])
         return self.coerce(value, T.INT, node)

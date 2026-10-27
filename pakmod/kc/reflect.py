@@ -1,6 +1,7 @@
-"""The game's reflection (classes, structs, enums, functions, properties) from a JMAP dump of the running game.
+"""The game's reflection (classes, structs, enums, functions, properties) from JMAP dumps of the running game.
 
-The dump (re/dumps/*.jmap, made with UE4SS, not in git) is read once and cached next to it as a pickle.
+The dumps (re/dumps/**/*.jmap, made with UE4SS, not in git) only hold what was loaded when they were taken, so all of
+them are merged, a newer dump winning; the result is read once and cached as re/dumps/merged.reflect.pkl.
 Paths are UE object paths: "/Script/Engine.Actor", "/Script/Engine.Actor:ReceiveBeginPlay",
 "/Game/Blueprints/Widgets/Common/W_StandardButton.W_StandardButton_C".
 """
@@ -24,23 +25,26 @@ KEPT = {
 
 
 def _load():
-    dumps = sorted(glob.glob(os.path.join(DUMPS, "*.jmap")))
+    dumps = sorted(glob.glob(os.path.join(DUMPS, "**", "*.jmap"), recursive=True), key=os.path.getmtime)
     if not dumps:
         raise FileNotFoundError("no JMAP dump in " + DUMPS + " (see docs/development.md)")
-    path = dumps[-1]
-    cache = path + ".reflect.pkl"
-    if os.path.exists(cache) and os.path.getmtime(cache) >= os.path.getmtime(path):
-        return pickle.load(open(cache, "rb"))
-    objects = json.load(open(path, encoding="utf-8"))["objects"]
+    cache = os.path.join(DUMPS, "merged.reflect.pkl")
+    if os.path.exists(cache):
+        cached = pickle.load(open(cache, "rb"))
+        if cached.get("dumps") == [(p, os.path.getmtime(p)) for p in dumps]:
+            return cached["db"]
     db = {}
-    for name, obj in objects.items():
-        if obj.get("class") in KEPT:
-            db[name] = {k: obj.get(k) for k in (
-                "class", "outer", "super_struct", "properties", "function_flags", "class_flags",
-                "properties_size", "class_default_object", "names", "children")}
-            if obj.get("class") in ("/Script/CoreUObject.Enum", "/Script/Engine.UserDefinedEnum"):
-                db[name]["enum_names"] = obj.get("names") or obj.get("enum_names")
-    pickle.dump(db, open(cache, "wb"))
+    for path in dumps:  # oldest first: a newer dump overwrites what both have
+        objects = json.load(open(path, encoding="utf-8"))["objects"]
+        for name, obj in objects.items():
+            if obj.get("class") in KEPT:
+                db[name] = {k: obj.get(k) for k in (
+                    "class", "outer", "super_struct", "properties", "function_flags", "class_flags",
+                    "properties_size", "class_default_object", "names", "children")}
+                if obj.get("class") in ("/Script/CoreUObject.Enum", "/Script/Engine.UserDefinedEnum"):
+                    db[name]["enum_names"] = obj.get("names") or obj.get("enum_names")
+        del objects
+    pickle.dump({"dumps": [(p, os.path.getmtime(p)) for p in dumps], "db": db}, open(cache, "wb"))
     return db
 
 

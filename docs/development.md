@@ -64,7 +64,10 @@ UAssetAPI JSON; UAssetGUI turns them into `.uasset`/`.uexp`, and `repak` packs t
 [modio-pak-research.md](modio-pak-research.md).
 
 Requirements:
-- a JMAP dump of the game's reflection in `re/dumps/*.jmap` and a `.usmap` (taken with UE4SS, not in git);
+- JMAP dumps of the game's reflection in `re/dumps/**/*.jmap` and a `.usmap` (taken with UE4SS, not in git). A dump
+  holds only the classes loaded when it was taken, so `kc/reflect.py` merges all of them (a newer one wins) and
+  caches the result in `re/dumps/merged.reflect.pkl`; the widget classes the mode uses come from a dump taken in a
+  mission;
 - `tools/bin/uassetgui/UAssetGUI.exe` (1.1.0) and `tools/bin/repak/repak.exe` (0.2.3) from their GitHub releases;
 - the type mappings: `%LOCALAPPDATA%\UAssetGUI\Mappings\RoN.usmap` (a copy of the `.usmap` from the dump).
 

@@ -104,3 +104,22 @@ After the game, send these files from the host's machine:
 - The items where the result did not match the expectation: what exactly was visible, to whom (host or friend),
   approximate time.
 - 20–30 minutes of play without crashes. If someone crashed: the time and what was happening.
+
+## Mods-menu version 0.4.0: what needs a friend
+
+The host and the friend both subscribe to the mod (the friend may instead turn on "Join modded servers"; then the
+items marked "with the pak" do not apply).
+
+1. **Tab scoreboard on the friend's side** (with the pak): during a round, holding Tab shows the round, the score,
+   the time left, both players with kills and deaths, the bots and the AI suspects left. It opens together with the
+   mission journal; if the journal hides it or Tab does nothing, note it.
+2. **The friend's language** (with the pak): the scoreboard follows the friend's game language; chat lines from the
+   mod are in the host's language.
+3. **Kill feed:** when the host kills the friend or a bot, both see a line like "w4me killed King (SR-16)" in chat.
+4. **Round events for the friend:** round start, result, side swap and "Taking over an AI suspect in 10 s" come to
+   the friend as short chat lines; the host sees them as popups at the bottom centre.
+5. **Stats:** the result page shows both players' kills and deaths and the best player; the friend's scoreboard
+   shows the same numbers.
+6. **Spawn protection:** the friend, just after a takeover, cannot be hurt for about 3 s.
+7. **Bot slots:** with the host on the suspects' side and the friend on SWAT, the SWAT card shows the friend and four
+   bot slots; removing two leaves the friend with two bots in the round.

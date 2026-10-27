@@ -728,6 +728,54 @@ Result (0.3.0-alpha, Mods-menu version):
 - rule sets (`PvPState.Rules`, «ПРАВИЛА» (Rules) button): vanilla keeps the AI's guns and armour as the mission
   built them (a pistol-only AI gives a pistol only), balanced is the 0.2.1 rifles and Kevlar.
 
+## Native UI, stats and a fifth officer (27.10.2026)
+
+Task: the player found the mod's green text at the side ugly and asked for a Tab scoreboard, match stats, bot slots
+(five bots when the host plays a suspect), English and spawn protection, all in the game's own style.
+
+Findings (reflection, checks in the game through RonCompProbe, Gas station, pak):
+- **Messages.**
+  - In a mission the game shows chat as green lines at the bottom right, its own "<name> joins the game" too. The
+    mod's chat lines landed there; `W_HumanCharacter_HUD_V2_C.AddToast` shows nothing visible in this HUD.
+  - `RChatMessage.bKillfeed` marks the game's kill feed lines (they go to the same list).
+    `PlayerCharacter.LocalKillFeed` covers players only, so the mod writes its own kill feed lines.
+  - `AddObjectivePopup(Text)` is the game's popup at the bottom centre: popups stack and fade in about 3 s. One sent
+    while the mission fades in from loading (or right after a respawn) is lost, so the mode holds them for 2–3 s.
+  - The chat font has no "→"; the menu font draws "·" on the baseline, like a full stop.
+- **Fonts.** The pre-mission screen uses Barlow (`/Game/ReadyOrNot/Fonts/Barlow/Barlow`, typefaces SemiBold,
+  Medium, Bold) with Cyrillic. The scoreboard's column titles use TeutonNormal-Bold, which falls back to another face
+  for Cyrillic. A text block made by a mod gets the engine's Roboto unless it is given a font.
+- **Scoreboard parts** (`/Game/Blueprints/Widgets/Common/`):
+  - `W_Scoreboard_C`: root canvas → overlay (blur, border, spacer that fixes the size, `W_ScoreboardFill_C`);
+  - `W_ScoreboardFill_C` rebuilds its lists on every tick in its own co-op layout, so it cannot be filled by
+    hand. Its header row (`Name`, `Kills`, …, `Ping`) can be moved out; the texts are written by its refresh, so
+    they come empty;
+  - `W_Scoreboard_Line_C` with `PlayerState` set shows the name, kills, deaths, status (in the game's words) and
+    ping, and highlights the local player. With no `PlayerState` it collapses `Deaths` and shows another column with
+    "0"; `RenderOpacity` 0 hides them and keeps their place.
+- **Keys:** `PlayerController.IsInputKeyDown(FKey)` reads a key without an input binding.
+- **Replicated stats:** `ReadyOrNotPlayerState.Kills/Deaths` and `ReadyOrNotGameState.BlueTeamWins/RedTeamWins/
+  RoundTimeRemaining` (co-op leaves them unused). `ReadyOrNotCharacter.KilledBy/IncapacitatedBy` are set from the
+  damage instigator (`ApplyDamage` with a controller and a causer).
+- **Spawn protection:** `ReadyOrNotCharacter.bGodMode`, set on the server, blocks damage (checked: on right after a
+  takeover, off 3 s later).
+- **The squad.** `SWATManager.SwatAI` holds the mission's four `CyberneticsSwat_V2_C`, squad positions 0–3. Their
+  faces are `Customization.Character`: `CC_King`, `CC_Swan`, `CC_Prescott`, `CC_Eli`; `RosterCharacter` is empty in
+  co-op. `SWATManager.SwatTrailers` / `CoopGM.SpawnedTrailerSWATAI` are four `CyberneticsSwatTrailer_C` kept under
+  the map (Z = −10000).
+- **A fifth officer:**
+  - spawn: `BeginDeferredActorSpawnFromClass(CoopGM.SwatAlphaClass)`, `SquadPosition = 4` (Foxtrot),
+    `FinishSpawningActor`, then `SpawnDefaultController` (`BP_SWAT_GOAP_Controller_C`);
+  - the first officer's `DefaultTeam`, then onto `SWATManager.SwatAI` and `CoopGM.SpawnedSWATAI`;
+  - the mission dresses only its own officers. A spawned one has no weapon and no head:
+    - `EquipLoadoutOnPlayer` with the first officer's guns, armour, helmet, mount and facewear gives the kit;
+    - copying `Customization` with another face (`CC_Gideon`, one of 27 loaded `CC_*`) and calling
+      `OnRep_Customization` dresses it;
+  - checked: it follows the squad's orders and fights; when an officer dies, the game renumbers the squad positions
+    itself (Gideon became position 3).
+- Officers beyond the host's pick leave the squad lists and are destroyed 2 s after the squad appears; sizing it
+  earlier missed officers the mission had not spawned yet.
+
 ## Lobby limit: 5 → 10 (26.10.2026)
 
 Observation (decompilation, checking the value in game):
