@@ -36,3 +36,4 @@ Thumbs.db
 
 # Release archives (tools/package_release.ps1)
 dist/
+__pycache__/
