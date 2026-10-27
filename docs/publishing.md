@@ -59,7 +59,7 @@ Unofficial fan mod, not affiliated with VOID Interactive.
 
 **Mod name:** PvP - SWAT vs Suspects (Alpha)
 
-**Version:** 0.1.0-alpha
+**Version:** 0.2.0-alpha
 
 **Category:** Gameplay (если есть «Game Modes» — она)
 
@@ -100,7 +100,7 @@ Turns any Ready or Not co-op mission into PvP: SWAT players against suspect play
 [*]Host a lobby and start any co-op mission - the team menu opens on the pre-mission screen.
 [/list]
 Friends need nothing installed. Uninstall: [b]Uninstall.bat[/b]. Update: run Install.bat of the new version (settings are kept).
-The in-game Mods menu (mod.io) only installs .pak files, so it cannot install this mod yet.
+There is also a version for the in-game Mods menu (mod.io, no UE4SS, slightly fewer rules): see GitHub.
 
 [size=5][b]Known limitations[/b][/size]
 [list]
