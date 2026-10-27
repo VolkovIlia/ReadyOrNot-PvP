@@ -9,16 +9,19 @@
 
 ## mod.io (меню «Моды» в игре)
 
-Публикует владелец аккаунта mod.io: https://mod.io/g/readyornot → Add mod.
+Страница мода: https://mod.io/g/readyornot/m/pvp-swat-vs-suspects (создана 2026-10-27). Новую версию загружает владелец аккаунта:
+страница мода → Edit → File manager (zip, номер версии, changelog, согласие с условиями mod.io).
+Поля формы mod.io обновляются только по событию change: при заполнении скриптом браузера
+значение нужно отправить в компонент Vue, иначе «Create mod» отвечает «Field is required».
 
 - **Name:** PvP - SWAT vs Suspects (Alpha)
 - **Logo:** `assets/pvp-cover.png`
 - **File:** `dist/RoNPvP-<версия>-modio.zip`, версия `<версия>`
-- **Tags:** Gameplay / Game Mode / Multiplayer (что есть в списке)
+- **Tags:** Gameplay, AI
 - **Summary:**
-  ALPHA. Turns any co-op mission into PvP: SWAT players vs suspect players, a CS2-style team menu, rounds and a
-  halftime side swap. Suspects respawn by taking over AI suspects. Optional AI SWAT bots. Only the host needs it;
-  friends turn on "Join modded servers". Bugs: GitHub Issues.
+  ALPHA. Any co-op mission becomes PvP: SWAT players vs suspect players. Team menu, rounds, halftime side swap.
+  Dead suspects take over AI suspects. Optional AI SWAT bots. Host installs it; friends enable "Join modded
+  servers". Bugs: GitHub. (лимит mod.io — 250 символов)
 - **Description:**
 
 ```
@@ -27,7 +30,7 @@ ALPHA VERSION - expect bugs. Please report them on GitHub: https://github.com/Vo
 
 Turns any Ready or Not co-op mission into PvP: SWAT players against suspect players.
 
-- CS2-style team menu on the host's pre-mission screen: team cards, bots, match settings, Ready.
+- Team menu on the host's pre-mission screen: team cards, bots, match settings, Ready.
   Other players pick a side in chat: !swat or !suspect.
 - Rounds: a match to N wins (default 3), round and match result screens instead of the SWAT debriefing,
   halftime side swap, the next round starts by itself.
@@ -64,7 +67,7 @@ Unofficial fan mod, not affiliated with VOID Interactive.
 **Category:** Gameplay (если есть «Game Modes» — она)
 
 **Summary (до 350 символов):**
-ALPHA. Turns any co-op mission into PvP: SWAT players vs suspect players, CS2-style team menu, rounds and halftime side swap. Suspects respawn by taking over AI suspects. Optional AI SWAT bots. Host-only: run Install.bat, friends need nothing. Report bugs on GitHub Issues.
+ALPHA. Turns any co-op mission into PvP: SWAT players vs suspect players, team menu, rounds and halftime side swap. Suspects respawn by taking over AI suspects. Optional AI SWAT bots. Host-only: run Install.bat, friends need nothing. Report bugs on GitHub Issues.
 
 **Requirements:** RE-UE4SS (уже внутри архива, ставится Install.bat). Ссылка: https://github.com/UE4SS-RE/RE-UE4SS
 
@@ -85,7 +88,7 @@ Attach the host's logs: [i]ReadyOrNot\Binaries\Win64\ue4ss\UE4SS.log[/i] and [i]
 [size=5][b]What it does[/b][/size]
 Turns any Ready or Not co-op mission into PvP: SWAT players against suspect players.
 [list]
-[*][b]CS2-style team menu[/b] on the host's pre-mission screen: team cards, bots, match settings, Ready. Other players pick a side in chat: [b]!swat[/b] or [b]!suspect[/b].
+[*][b]Team menu[/b] on the host's pre-mission screen: team cards, bots, match settings, Ready. Other players pick a side in chat: [b]!swat[/b] or [b]!suspect[/b].
 [*][b]Rounds[/b]: a match to N wins (default 3), round and match result screens instead of the SWAT debriefing, halftime side swap, the next round starts by itself.
 [*][b]Suspect players[/b] spawn in an AI suspect's place with suspect guns and clothes, no armour or SWAT gear. After a death they take over another living AI suspect that no SWAT can see.
 [*][b]Optional AI SWAT squad[/b]: it fights for SWAT and hunts suspects on its own when no SWAT player is alive. You can play alone against bots on either side.

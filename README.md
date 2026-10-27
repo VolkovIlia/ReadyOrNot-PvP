@@ -12,7 +12,7 @@
 > **Alpha version.** Bugs are expected. Please report them in [GitHub Issues](https://github.com/VolkovIlia/ReadyOrNot-PvP/issues/new/choose). [English summary below](#english).
 
 Мод превращает любую ко-оп миссию Ready or Not в PvP: игроки SWAT против игроков-подозреваемых, раунды и смена
-сторон как в CS2. Ставит его **только хост**. Есть две версии:
+сторон в перерыве. Ставит его **только хост**. Есть две версии:
 
 | | Меню «Моды» (pak) | Установщик (UE4SS) |
 |---|---|---|
@@ -26,7 +26,7 @@
 
 ## Возможности
 
-- **Выбор команды в духе CS2** на экране подготовки любой ко-оп миссии: карточки SWAT и подозреваемых, игроки,
+- **Выбор команды** на экране подготовки любой ко-оп миссии: карточки SWAT и подозреваемых, игроки,
   боты, настройки матча, «Готов».
 - **Раунды.** Матч до N побед (по умолчанию 3). Раунд кончается внутри миссии, затем миссия загружается заново.
   Свой экран итогов раунда и матча вместо штатного экрана SWAT, смена сторон в перерыве.
@@ -40,7 +40,7 @@
 
 ## Установка через меню «Моды» (pak)
 
-1. В главном меню игры откройте «Моды», найдите **PvP - SWAT vs Suspects** и подпишитесь, затем перезапустите игру.
+1. В главном меню игры откройте «Моды», найдите **PvP - SWAT vs Suspects** ([страница на mod.io](https://mod.io/g/readyornot/m/pvp-swat-vs-suspects)) и подпишитесь, затем перезапустите игру.
    Без меню: скачайте `RoNPvP-…-modio.zip` со страницы [Releases](https://github.com/VolkovIlia/ReadyOrNot-PvP/releases)
    и положите `RoNPvP.pak` в `<папка игры>\ReadyOrNot\Content\Paks\~mods\`.
 2. Друзьям: подписаться на мод **или** один раз включить «Настройки → Игра → Подключаться к серверам с модами» —
@@ -153,13 +153,13 @@ comp_status                       версия мода, защита, сост�
 ## English
 
 **Ready or Not PvP** turns any Ready or Not co-op mission into PvP: SWAT players against suspect players, in rounds
-with a halftime side swap, like CS2. **Only the host installs it** — friends play the vanilla game.
+with a halftime side swap. **Only the host installs it** — friends play the vanilla game.
 
 > **Alpha.** Expect bugs. Please report them in [Issues](https://github.com/VolkovIlia/ReadyOrNot-PvP/issues/new/choose)
 > with the host's `ue4ss\UE4SS.log` and `ue4ss\Mods\HostBrain\native\RonCompNative.log`.
 > The in-game menu and messages are in Russian for now.
 
-- A CS2-style team page on the host's pre-mission screen; others type `!swat` or `!suspect` in chat.
+- A team page on the host's pre-mission screen; others type `!swat` or `!suspect` in chat.
 - Rounds to N wins (default 3), round and match result pages, halftime swap.
 - Suspect players spawn in an AI suspect's place with suspect guns and clothes, no armour or SWAT gear, and after
   a death take over another living AI suspect.
@@ -168,7 +168,7 @@ with a halftime side swap, like CS2. **Only the host installs it** — friends p
   (installer version; the Mods-menu version cannot filter those actions or hide score popups).
 
 Install (host), either:
-- **In-game Mods menu:** subscribe to **PvP - SWAT vs Suspects** and restart the game (or put `RoNPvP.pak` from the
+- **In-game Mods menu:** subscribe to **PvP - SWAT vs Suspects** ([mod.io page](https://mod.io/g/readyornot/m/pvp-swat-vs-suspects)) and restart the game (or put `RoNPvP.pak` from the
   `-modio.zip` release asset into `ReadyOrNot\Content\Paks\~mods\`). Friends subscribe too, or turn on
   "Join modded servers" once — the game hides modded lobbies otherwise.
 - **Installer:** download the [latest release](https://github.com/VolkovIlia/ReadyOrNot-PvP/releases), unzip
@@ -178,7 +178,7 @@ Install (host), either:
 ## Разработка
 
 Сборка, устройство мода и находки реверса: [docs/development.md](docs/development.md),
-[docs/re-findings.md](docs/re-findings.md). Дальние планы (режим с бомбой и экономикой CS2): [docs/design.md](docs/design.md).
+[docs/re-findings.md](docs/re-findings.md). Дальние планы (режим с бомбой и экономикой): [docs/design.md](docs/design.md).
 История версий: [CHANGELOG.md](CHANGELOG.md).
 
 ## Правовое
