@@ -48,7 +48,7 @@ LIBRARIES = ["/Script/Engine.KismetSystemLibrary", "/Script/Engine.KismetMathLib
              "/Script/Engine.KismetStringLibrary", "/Script/Engine.KismetTextLibrary",
              "/Script/Engine.GameplayStatics", "/Script/UMG.WidgetBlueprintLibrary",
              "/Script/Engine.KismetInputLibrary", "/Script/ReadyOrNot.BpGameplayHelperLib",
-             "/Script/ReadyOrNot.ReadyOrNotFunctionLibrary"]
+             "/Script/ReadyOrNot.ReadyOrNotFunctionLibrary", "/Script/Engine.SubsystemBlueprintLibrary"]
 
 
 def _rank(path):
@@ -79,6 +79,7 @@ class Symbols:
 
 
 SYMBOLS = None
+OWN = {}  # path of each Blueprint class of the module being compiled -> its ClassCompiler
 
 
 def symbols():
@@ -140,10 +141,12 @@ class Module:
         return CompileError("%s:%d: %s" % (self.filename, getattr(node, "lineno", 0), message))
 
     def compile(self):
-        blueprints = []
-        for node in self.classes:
-            blueprints.append(ClassCompiler(self, node).compile())
-        return blueprints
+        compilers = [ClassCompiler(self, node) for node in self.classes]
+        for compiler in compilers:
+            compiler.declare()
+        for compiler in compilers:
+            compiler.compile_bodies()
+        return [compiler.bp for compiler in compilers]
 
 
 class ClassCompiler:
@@ -158,7 +161,9 @@ class ClassCompiler:
         self.super = self.resolve_class(node.bases[0])
         self.bp = Blueprint(self.package_path, self.super)
         symbols().aliases[node.name] = self.bp.path
+        OWN[self.bp.path] = self
         self.defaults = []
+        self.compilers = []
 
     def resolve_class(self, node):
         name = node.id if isinstance(node, ast.Name) else None
@@ -200,7 +205,8 @@ class ClassCompiler:
                 return T.Type("weak", cls=self.type_of(args[0]).cls)
         raise self.module.error(node, "unsupported type %s" % ast.unparse(node))
 
-    def compile(self):
+    def declare(self):
+        """Members and function signatures (every class of the module before any body)."""
         functions = []
         for item in self.node.body:
             if isinstance(item, ast.AnnAssign):
@@ -235,11 +241,18 @@ class ClassCompiler:
                     function.param("ReturnValue", result, ret=True)
             compilers.append(FunctionCompiler(self, item, function))
         if self.defaults and "ReceiveBeginPlay" not in self.bp.functions:
+            if not reflect.is_child_of(self.super, "/Script/Engine.Actor"):
+                raise self.module.error(self.node, "member defaults need an Actor (set them in a function instead)")
             function = self.bp.function("ReceiveBeginPlay", override=reflect.find_function(self.super, "ReceiveBeginPlay"))
             compilers.append(FunctionCompiler(self, None, function))
-        for compiler in compilers:
+        self.compilers = compilers
+        for function in self.bp.functions.values():
+            from .uasset import known
+            known(self.bp.path + ":" + function.name, "/Script/CoreUObject.Function")
+
+    def compile_bodies(self):
+        for compiler in self.compilers:
             compiler.compile()
-        return self.bp
 
 
 class Loop:
@@ -305,6 +318,8 @@ class FunctionCompiler:
         want = None
         if isinstance(target, ast.Name) and target.id in self.vars:
             want = self.vars[target.id].type
+        elif isinstance(target, ast.Attribute):
+            want = self.attribute(target).type
         self.assign_to(target, self.expr(node.value, want=want), node.value)
 
     def assign_to(self, target, value, source):
@@ -535,10 +550,35 @@ class FunctionCompiler:
         target = self.expr(node.value)
         if target.type is None or target.type.kind not in ("object", "struct", "class"):
             raise self.error(node, "%r has no members" % target.type)
+        if target.type.kind == "object" and target.type.cls in OWN:
+            return self.own_member(target, node.attr, node)
         try:
             return self.f.member(target, node.attr)
         except KeyError as e:
             raise self.error(node, str(e))
+
+    def own_member(self, target, name, node):
+        """A member variable of another of our Blueprint classes (or of this one, through a reference)."""
+        owner = OWN[target.type.cls]
+        if name not in owner.bp.members:
+            raise self.error(node, "%s has no member %s" % (owner.bp.name, name))
+        var = owner.bp.members[name]
+        pointer = prop_pointer(name, self.bp.package.object(owner.bp.path))
+        inner = make("EX_InstanceVariable", Variable=pointer)
+        return Expr(self.f.context(target, inner, pointer), var.type, True, pointer)
+
+    def call_own(self, owner, method, target, args, node):
+        """Calls a function of one of our Blueprint classes on another object."""
+        function = owner.bp.functions.get(method)
+        if function is None:
+            raise self.error(node, "%s has no function %s" % (owner.bp.name, method))
+        inputs = [(n, t) for n, t, f in function.params if "CPF_ReturnParm" not in f]
+        if len(args) != len(inputs):
+            raise self.error(node, "%s takes %d arguments" % (method, len(inputs)))
+        values = [self.coerce(self.expr(a, t), t, a).json for a, (n, t) in zip(args, inputs)]
+        ret = next(((n, t) for n, t, f in function.params if "CPF_ReturnParm" in f), None)
+        call_json = make("EX_FinalFunction", StackNode=self.bp.package.object(owner.bp.path + ":" + method), Parameters=values)
+        return self.f.script_call(call_json, ret, target, None)
 
     def enum_value(self, path, name, node):
         names = reflect.get(path).get("enum_names") or []
@@ -740,6 +780,14 @@ class FunctionCompiler:
         return tuple(self.expr(e) for e in node.elts)
 
     def e_List(self, node, want):
+        if (want is None or want.kind != "array") and node.elts:
+            # element type from the first element: [150.0, 220.0], ["King", "Swan"]
+            first = node.elts[0]
+            if isinstance(first, ast.Constant):
+                inner = {bool: T.BOOL, int: T.INT, float: T.DOUBLE, str: T.STR}[type(first.value)]
+            else:
+                inner = self.expr(first).type
+            want = T.array(inner)
         if want is None or want.kind != "array":
             raise self.error(node, "list literal needs a known array type (annotate the variable)")
         result = self.f.temp(want, "List")
@@ -803,6 +851,8 @@ class FunctionCompiler:
                         raise self.error(node, "%s has no function %s" % (owner.id, method))
                     return self.call_game(function, None, [self.expr(a) for a in args], node=node, multi=True)
             target = self.expr(owner)
+            if target.type is not None and target.type.kind == "object" and target.type.cls in OWN:
+                return self.call_own(OWN[target.type.cls], method, target, args, node)
             container = getattr(self, "m_" + target.type.kind + "_" + method, None) if target.type else None
             if container is not None:
                 return container(target, args, node)
@@ -821,9 +871,9 @@ class FunctionCompiler:
         parameters left out of the call come back as extra results: (result, out1, out2...)."""
         params = reflect.params(function)
         inputs = [p for p in params if "CPF_ReturnParm" not in p["flags"]]
-        if inputs and inputs[0]["name"] == "WorldContextObject" and len(args) == len(inputs) - 1:
-            args = [self.f.self_expr()] + list(args)
         required = [p for p in inputs if not ("CPF_OutParm" in p["flags"] and "CPF_ReferenceParm" not in p["flags"])]
+        if inputs and inputs[0]["name"] == "WorldContextObject" and len(args) in (len(inputs) - 1, len(required) - 1):
+            args = [self.f.self_expr()] + list(args)
         outs = []
         final = []
         if len(args) == len(inputs):
@@ -843,7 +893,9 @@ class FunctionCompiler:
                 function, len(inputs), ", ".join(p["name"] for p in inputs), len(args)))
         result = self.f.call(function, target, final)
         if outs:
-            return tuple([result] + outs) if multi else (result if result is not None else outs[0])
+            # (result, out1, ...) or, for a function without a result, (out1, ...)
+            values = ([result] if result is not None else []) + outs
+            return tuple(values) if multi and len(values) > 1 else values[0]
         return result
 
     def call_lib(self, function, args, types, ret=None, result=None):
@@ -1109,6 +1161,10 @@ class FunctionCompiler:
             return self.math("Conv_IntToByte", value)
         if a == "byte" and b == "enum" or a == "enum" and b == "byte":
             return Expr(value.json, type, value.lvalue, value.prop)
+        if (a, b) == ("int", "enum"):
+            return Expr(self.math("Conv_IntToByte", value).json, type)
+        if (a, b) == ("enum", "int"):
+            return self.math("Conv_ByteToInt", as_byte(value))
         if (a, b) == ("byte", "double"):
             return self.math("Conv_IntToDouble", self.math("Conv_ByteToInt", value))
         if b == "str":

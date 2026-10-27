@@ -55,6 +55,42 @@ powershell -File tools/package_release.ps1
 
 Версия мода — `Version` в `HostBrain/ue4ss-mods/HostBrain/Scripts/main.lua` и запись в [CHANGELOG.md](../CHANGELOG.md).
 
+## Pak-версия для меню «Моды» (`pakmod/`)
+
+Режим для mod.io собирается без редактора UE: логика написана на подмножестве Python (`pakmod/src/pvp.py`), компилятор
+`pakmod/kc` переводит её в байткод Kismet и пишет cooked-ассеты UE 5.3 как JSON UAssetAPI; UAssetGUI делает из них
+`.uasset`/`.uexp`, `repak` упаковывает в pak. Подробно — в [modio-pak-research.md](modio-pak-research.md).
+
+Что нужно:
+- JMAP-дамп рефлексии игры в `re/dumps/*.jmap` и `.usmap` (снимаются UE4SS, в git не входят);
+- `tools/bin/uassetgui/UAssetGUI.exe` (1.1.0) и `tools/bin/repak/repak.exe` (0.2.3) из их релизов на GitHub;
+- карта типов: `%LOCALAPPDATA%\UAssetGUI\Mappings\RoN.usmap` (копия `.usmap` из дампа).
+
+Сборка, установка в `Paks/~mods` и архив для mod.io:
+```bash
+python pakmod/build.py pvp --deploy --zip
+```
+
+Устройство:
+- `kc/kismet.py` — выражения Kismet и их размеры в памяти (проверены на 146 функциях Blueprint игры);
+- `kc/uasset.py` — пакет: таблица имён, импорты, экспорты;
+- `kc/blueprint.py` — класс, функции, переменные, вызовы;
+- `kc/lang.py` — компилятор языка;
+- `kc/data.py` — `ModActorSpawnData`;
+- `kc/reflect.py`, `kc/types.py` — рефлексия игры и типы свойств.
+
+Справка по функциям и свойствам игры: `python pakmod/sig.py ReadyOrNotPlayerController:ReadyUp "W_StandardButton_C:*Click*"`.
+
+Правила байткода, на которых уже падала игра:
+- результат функции пишется через `EX_LocalOutVariable(ReturnValue)`, а вызов присваивается `EX_Let(temp, вызов)`.
+  Передавать адрес результата аргументом нельзя: `ProcessScriptFunction` пропускает параметр результата;
+- `EX_Return` без значения: копирование результата в буфер вызова-инструкции (64 байта, не инициализирован)
+  роняет игру на массивах и строках;
+- имя вида `Ret_1` движок хранит как `Ret` с номером, базовое имя тоже нужно в таблице имён.
+
+Отладка: директор пишет журнал в `Notes` (UE4SS: `FindAllOf("BP_PvPDirector_C")[1].Notes`) и в
+`SaveGames\RoNPvPLog.sav`. Функции Blueprint можно вызывать из UE4SS напрямую.
+
 ## Экспериментальное: штатные PvP-режимы игры
 
 В игре остались собственные PvP-режимы (Firefight, Defusal и др.). `comp_start` переносит лобби на карту в таком режиме.

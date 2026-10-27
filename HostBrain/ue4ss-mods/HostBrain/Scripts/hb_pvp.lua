@@ -1000,6 +1000,13 @@ if not hooked then Log("cannot hook chat: %s", tostring(hookError)) end
 -- team choice needs no console. Nobody choosing the suspects leaves a plain co-op mission.
 local function AutoArm()
     if not Settings.Auto or Match.AutoWorld == C.Worlds.Generation or (Deps.OtherModeActive and Deps.OtherModeActive()) then return end
+    -- the mod.io version of the mode (pakmod) runs its own director: two team menus would fight
+    local director = FindFirstOf("BP_PvPDirector_C")
+    if Valid(director) then
+        Match.AutoWorld = C.Worlds.Generation
+        Log("PvP: the mod.io version (BP_PvPDirector) runs this mission; HostBrain's mode stands down")
+        return
+    end
     local gameMode = UEHelpers.GetGameModeBase()
     local coop = StaticFindObject("/Script/ReadyOrNot.CoopGM")
     if not Valid(gameMode) or not Valid(coop) or not gameMode:IsA(coop) or not PreMissionScreen() then return end

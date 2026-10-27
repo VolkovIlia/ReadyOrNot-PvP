@@ -39,14 +39,15 @@ class Expr:
 
 
 class Var:
-    def __init__(self, name, type, owner, member):
-        self.name, self.type, self.owner, self.member = name, type, owner, member
+    def __init__(self, name, type, owner, member, out=False):
+        self.name, self.type, self.owner, self.member, self.out = name, type, owner, member, out
 
     def pointer(self):
         return prop_pointer(self.name, self.owner)
 
     def expr(self):
-        token = "EX_InstanceVariable" if self.member else "EX_LocalVariable"
+        # out parameters (the result included) live at the caller's address: EX_LocalOutVariable
+        token = "EX_InstanceVariable" if self.member else "EX_LocalOutVariable" if self.out else "EX_LocalVariable"
         return Expr(make(token, Variable=self.pointer()), self.type, True, self.pointer())
 
 
@@ -80,7 +81,7 @@ class Function:
             pass
         flags.append("CPF_BlueprintVisible" if not ret else "CPF_None")
         self.params.append((name, type, ", ".join(f for f in flags if f != "CPF_None")))
-        var = Var(name, type, self.index, False)
+        var = Var(name, type, self.index, False, out or ret)
         self.locals[name] = var
         self.order.append(name)
         if ret:
@@ -129,6 +130,9 @@ class Function:
             self.emit(make(let, VariableExpression=target.json, AssignmentExpression=value.json))
 
     def ret(self):
+        # The result is already at the caller's address (EX_LocalOutVariable). EX_Return does not copy it
+        # again: a call made as a statement gives RESULT_PARAM a small uninitialised buffer, and copying an
+        # array or a string into that crashes the game.
         self.emit(make("EX_Return", ReturnExpression=make("EX_Nothing")))
 
     # ---- expressions
@@ -173,7 +177,7 @@ class Function:
             inputs = [(n, t, f) for n, t, f in params if "CPF_ReturnParm" not in f]
             call_json = make("EX_LocalFinalFunction", StackNode=own.index,
                              Parameters=self._args(inputs, args, own.name))
-            return self._finish_call(call_json, ret_param, None, result)
+            return self.script_call(call_json, ret_param, None, result)
         flags = reflect.flags(function)
         params = reflect.params(function)
         ret_record = next((p for p in params if "CPF_ReturnParm" in p["flags"]), None)
@@ -195,6 +199,14 @@ class Function:
             call_json = make("EX_VirtualFunction", VirtualFunctionName=self.bp.package.fname(function.split(":")[1]),
                              Parameters=parameters)
         ret_param = (ret_record["name"], from_record(ret_record)) if ret_record else None
+        if "FUNC_Native" not in flags:
+            return self.script_call(call_json, ret_param, target, result)
+        return self._finish_call(call_json, ret_param, target, result)
+
+    def script_call(self, call_json, ret_param, target, result):
+        """A call of a Blueprint (script) function. ProcessScriptFunction skips the result parameter when it
+        reads the arguments and points the callee's ReturnValue (EX_LocalOutVariable) at the caller's
+        result address, so the call is assigned like a native one: EX_Let(temp, call)."""
         return self._finish_call(call_json, ret_param, target, result)
 
     def _args(self, inputs, args, what):

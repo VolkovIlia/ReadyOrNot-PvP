@@ -61,6 +61,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("target")
     parser.add_argument("--deploy", action="store_true")
+    parser.add_argument("--zip", action="store_true", help="dist/<pak>-<version>-modio.zip for a mod.io upload")
     args = parser.parse_args()
     target = importlib.import_module("targets." + args.target)
     out = os.path.join(ROOT, "build", "pakmod", args.target)
@@ -75,6 +76,19 @@ def main():
         os.makedirs(mods, exist_ok=True)
         shutil.copy2(pak_path, mods)
         print("  deployed to", mods)
+    if args.zip:
+        import re
+        import zipfile
+        version = re.search(r'^VERSION = "([^"]+)"', open(target.SRC, encoding="utf-8").read(), re.M).group(1)
+        dist = os.path.join(ROOT, "dist")
+        os.makedirs(dist, exist_ok=True)
+        zip_path = os.path.join(dist, "%s-%s-modio.zip" % (target.PAK_NAME, version))
+        readme = os.path.join(HERE, "README-modio.txt")
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.write(pak_path, target.PAK_NAME + ".pak")
+            if os.path.exists(readme):
+                archive.write(readme, "README.txt")
+        print("  zipped", zip_path, os.path.getsize(zip_path), "bytes")
 
 
 if __name__ == "__main__":

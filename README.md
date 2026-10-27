@@ -2,7 +2,7 @@
 
 # Ready or Not PvP — SWAT против подозреваемых
 
-![status: alpha](https://img.shields.io/badge/status-alpha-orange) ![host only](https://img.shields.io/badge/install-host%20only-blue) ![UE4SS](https://img.shields.io/badge/requires-RE--UE4SS-lightgrey) ![license: MIT](https://img.shields.io/badge/license-MIT-green)
+![status: alpha](https://img.shields.io/badge/status-alpha-orange) ![host only](https://img.shields.io/badge/install-host%20only-blue) ![mods menu](https://img.shields.io/badge/install-in--game%20Mods%20menu-yellow) ![license: MIT](https://img.shields.io/badge/license-MIT-green)
 
 > [!WARNING]
 > **Это альфа-версия.** Режим играбелен, но в нём есть ошибки, а с живыми соперниками он проверен мало.
@@ -12,7 +12,17 @@
 > **Alpha version.** Bugs are expected. Please report them in [GitHub Issues](https://github.com/VolkovIlia/ReadyOrNot-PvP/issues/new/choose). [English summary below](#english).
 
 Мод превращает любую ко-оп миссию Ready or Not в PvP: игроки SWAT против игроков-подозреваемых, раунды и смена
-сторон как в CS2. Ставит его **только хост**, остальным игрокам ничего устанавливать не нужно.
+сторон как в CS2. Ставит его **только хост**. Есть две версии:
+
+| | Меню «Моды» (pak) | Установщик (UE4SS) |
+|---|---|---|
+| Установка | подписка в меню «Моды» игры | `Install.bat` из архива |
+| Друзьям | один раз включить «Подключаться к серверам с модами» (или подписаться) | ничего |
+| Запреты подозреваемым (доклады, крик) | нет | есть |
+| Всплывающие очки миссии | остаются | скрыты |
+| Наблюдение после смерти | за кем угодно | только своя команда |
+
+Остальное одинаково: меню команд, раунды, вселение, снаряжение, боты, лобби на 10 игроков.
 
 ## Возможности
 
@@ -28,10 +38,22 @@
   SWAT-очки; гражданские нейтральны; наблюдение после смерти — только за своей командой.
 - **Лобби до 10 игроков** (5 на 5) вместо штатных 5.
 
-## Установка (только хост)
+## Установка через меню «Моды» (pak)
+
+1. В главном меню игры откройте «Моды», найдите **PvP - SWAT vs Suspects** и подпишитесь, затем перезапустите игру.
+   Без меню: скачайте `RoNPvP-…-modio.zip` со страницы [Releases](https://github.com/VolkovIlia/ReadyOrNot-PvP/releases)
+   и положите `RoNPvP.pak` в `<папка игры>\ReadyOrNot\Content\Paks\~mods\`.
+2. Друзьям: подписаться на мод **или** один раз включить «Настройки → Игра → Подключаться к серверам с модами» —
+   игра помечает лобби хоста с модами как «модифицированное» и без этого его не показывает.
+3. Начните ко-оп миссию — на экране подготовки откроется меню команд.
+
+Pak-версия работает без UE4SS: логику запускает штатный механизм модов игры (`ModActorSpawnData`). Если стоит и
+UE4SS-версия, она уступает миссию pak-версии.
+
+## Установка установщиком (UE4SS)
 
 1. Закройте игру.
-2. Скачайте `RoN-PvP-0.1.0-alpha.zip` со страницы [Releases](https://github.com/VolkovIlia/ReadyOrNot-PvP/releases/latest)
+2. Скачайте `RoN-PvP-…-alpha.zip` со страницы [Releases](https://github.com/VolkovIlia/ReadyOrNot-PvP/releases/latest)
    и распакуйте в любую папку.
 3. Запустите **`Install.bat`**. Он сам найдёт игру в Steam и поставит мод вместе с загрузчиком
    [RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS). Если UE4SS уже стоит, установщик его не трогает.
@@ -42,9 +64,6 @@
 Удаление — `Uninstall.bat` из того же архива: он убирает мод и UE4SS, если тот не нужен другим модам.
 Обновление — запустить `Install.bat` новой версии, настройки сохранятся.
 
-Через меню «Моды» в самой игре мод пока не ставится: оно умеет только `.pak`, а мод работает на UE4SS (DLL и Lua).
-Версия под это меню — в планах.
-
 <details>
 <summary>Ручная установка</summary>
 
@@ -52,7 +71,7 @@
    (проверено с `v3.0.1-1183-gcdbc0b66`): содержимое архива — в `<папка игры>\ReadyOrNot\Binaries\Win64\`,
    рядом с `ReadyOrNotSteam-Win64-Shipping.exe` должны лечь `dwmapi.dll` и папка `ue4ss`.
 2. Из архива мода скопируйте `game\ue4ss\Mods\HostBrain` в `<папка игры>\ReadyOrNot\Binaries\Win64\ue4ss\Mods\`.
-3. В `ue4ss\UE4SS.log` после запуска игры должна быть строка `[HostBrain] 0.1.0-alpha loaded`.
+3. В `ue4ss\UE4SS.log` после запуска игры должна быть строка `[HostBrain] … loaded`.
 </details>
 
 Антивирус может ругаться на `dwmapi.dll` — это загрузчик UE4SS, так он встраивается в игру.
@@ -145,12 +164,16 @@ with a halftime side swap, like CS2. **Only the host installs it** — friends p
 - Suspect players spawn in an AI suspect's place with suspect guns and clothes, no armour or SWAT gear, and after
   a death take over another living AI suspect.
 - Optional AI SWAT squad: it fights for SWAT and hunts suspects on its own when no SWAT player is alive.
-- Suspects cannot arrest, yell or report to TOC; civilians stay neutral; no score popups; 10-player lobbies.
+- Suspects cannot arrest, yell or report to TOC; civilians stay neutral; no score popups; 10-player lobbies
+  (installer version; the Mods-menu version cannot filter those actions or hide score popups).
 
-Install (host): download the [latest release](https://github.com/VolkovIlia/ReadyOrNot-PvP/releases/latest), unzip it
-and run **`Install.bat`** — it finds the game through Steam and installs the mod with
-[RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS). `Uninstall.bat` removes it. The in-game Mods menu (mod.io) only
-installs `.pak` files, so it cannot install this mod yet.
+Install (host), either:
+- **In-game Mods menu:** subscribe to **PvP - SWAT vs Suspects** and restart the game (or put `RoNPvP.pak` from the
+  `-modio.zip` release asset into `ReadyOrNot\Content\Paks\~mods\`). Friends subscribe too, or turn on
+  "Join modded servers" once — the game hides modded lobbies otherwise.
+- **Installer:** download the [latest release](https://github.com/VolkovIlia/ReadyOrNot-PvP/releases/latest), unzip
+  it and run **`Install.bat`** — it finds the game through Steam and installs the mod with
+  [RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS). Friends need nothing. `Uninstall.bat` removes it.
 
 ## Разработка
 
