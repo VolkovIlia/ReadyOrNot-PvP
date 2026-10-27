@@ -1,191 +1,183 @@
 <p align="center"><img src="assets/pvp-cover.png" alt="Ready or Not PvP: SWAT vs Suspects" width="720"></p>
 
-# Ready or Not PvP — SWAT против подозреваемых
+# Ready or Not PvP — SWAT vs Suspects
 
 ![status: alpha](https://img.shields.io/badge/status-alpha-orange) ![host only](https://img.shields.io/badge/install-host%20only-blue) ![mods menu](https://img.shields.io/badge/install-in--game%20Mods%20menu-yellow) ![license: MIT](https://img.shields.io/badge/license-MIT-green)
 
 > [!WARNING]
-> **Это альфа-версия.** Режим играбелен, но в нём есть ошибки, а с живыми соперниками он проверен мало.
-> Нашли ошибку или вылет — **напишите в [Issues](https://github.com/VolkovIlia/ReadyOrNot-PvP/issues/new/choose)**
-> и приложите логи (как их найти — [ниже](#сообщить-об-ошибке)). Каждый отчёт помогает.
->
-> **Alpha version.** Bugs are expected. Please report them in [GitHub Issues](https://github.com/VolkovIlia/ReadyOrNot-PvP/issues/new/choose). [English summary below](#english).
+> **This is an alpha version.** The mode is playable, but it has bugs and has seen little testing against live
+> opponents. Found a bug or a crash?
+> **Report it in [Issues](https://github.com/VolkovIlia/ReadyOrNot-PvP/issues/new/choose)** and attach the logs
+> (where to find them: [below](#report-a-bug)). Every report helps.
 
-Мод превращает любую ко-оп миссию Ready or Not в PvP: игроки SWAT против игроков-подозреваемых, раунды и смена
-сторон в перерыве. Ставит его **только хост**. Есть две версии:
+The mod turns any Ready or Not co-op mission into PvP: SWAT players against suspect players, in rounds with a
+halftime side swap. **The host installs it from the game's own Mods menu: no other tools, nothing to download by
+hand.** Friends subscribe too or turn on "Join modded servers" once.
 
-| | Меню «Моды» (pak) | Установщик (UE4SS) |
-|---|---|---|
-| Установка | подписка в меню «Моды» игры | `Install.bat` из архива |
-| Друзьям | один раз включить «Подключаться к серверам с модами» (или подписаться) | ничего |
-| Запреты подозреваемым (доклады, крик) | нет | есть |
-| Всплывающие очки миссии | остаются | скрыты |
-| Наблюдение после смерти | за кем угодно | только своя команда |
+An older version with a UE4SS installer still exists ([below](#legacy-ue4ss-installer)); it is no longer developed
+and lacks the features of 0.3.0.
 
-Остальное одинаково: меню команд, раунды, вселение, снаряжение, боты, лобби на 10 игроков.
+## Features
 
-## Возможности
+- **Team selection** on the pre-mission screen of any co-op mission: SWAT and suspect cards, players, bots, match
+  settings, «ГОТОВ» (Ready).
+- **Rounds.** A match to N wins (3 by default). A round ends inside the mission, then the mission reloads.
+  The mod's own round and match result screens replace the standard SWAT debriefing; sides swap at halftime.
+- **Two rule sets**, picked by the host in the menu:
+  - **vanilla**: the AI keep the armour and guns the mission gives them; a suspect player gets the player version of
+    the AI's own guns (a pistol only, if the AI had only a pistol);
+  - **balanced**: suspect players always get a rifle firing FMJ, and the AI SWAT squad wears a SWAT player's default
+    Kevlar instead of its ceramic and steel plates.
+- **Suspect players** spawn in place of AI suspects, with suspect weapons and clothes, without armour or SWAT gear.
+  10 s after a death they take over another living AI suspect, as long as there are any left.
+- **Suspects open any door**, locked ones too; SWAT still find a locked door locked and have to pick or breach it.
+- **Suspects pick up dropped guns**: hold the evidence-collect key on a gun to take it into your hands.
+- **Optional SWAT bots:** an AI squad fights for SWAT, and with no SWAT players it hunts the suspects on its own.
+  You can play alone against bots on either side.
+- **Lobbies of up to 10 players** (5v5) instead of the standard 5.
 
-- **Выбор команды** на экране подготовки любой ко-оп миссии: карточки SWAT и подозреваемых, игроки,
-  боты, настройки матча, «Готов».
-- **Раунды.** Матч до N побед (по умолчанию 3). Раунд кончается внутри миссии, затем миссия загружается заново.
-  Свой экран итогов раунда и матча вместо штатного экрана SWAT, смена сторон в перерыве.
-- **Игроки-подозреваемые** появляются на месте ИИ-подозреваемых, с оружием и одеждой подозреваемых, без брони и
-  SWAT-снаряжения. После смерти через 10 с вселяются в другого живого ИИ-подозреваемого, пока такие есть.
-- **Боты SWAT** по желанию: ИИ-отряд воюет за SWAT, а без игроков SWAT сам охотится на подозреваемых.
-  Можно играть одному против ботов за любую сторону.
-- **Честные правила:** подозреваемые не арестовывают, не кричат «на пол», не докладывают в TOC и не получают
-  SWAT-очки; гражданские нейтральны; наблюдение после смерти — только за своей командой.
-- **Лобби до 10 игроков** (5 на 5) вместо штатных 5.
+## Install from the Mods menu (pak)
 
-## Установка через меню «Моды» (pak)
+1. In the game's main menu open **Mods**, find **PvP - SWAT vs Suspects**
+   ([mod.io page](https://mod.io/g/readyornot/m/pvp-swat-vs-suspects)), subscribe, then restart the game.
+   Without the menu: download `RoNPvP-…-modio.zip` from
+   [Releases](https://github.com/VolkovIlia/ReadyOrNot-PvP/releases) and put `RoNPvP.pak` into
+   `<game folder>\ReadyOrNot\Content\Paks\~mods\`.
+2. Friends: subscribe to the mod **or** turn on Settings > Game > "Join modded servers" once. The game marks a host
+   lobby with mods as "modded" and does not show it otherwise.
+3. Start a co-op mission: the team menu opens on the pre-mission screen.
 
-1. В главном меню игры откройте «Моды», найдите **PvP - SWAT vs Suspects** ([страница на mod.io](https://mod.io/g/readyornot/m/pvp-swat-vs-suspects)) и подпишитесь, затем перезапустите игру.
-   Без меню: скачайте `RoNPvP-…-modio.zip` со страницы [Releases](https://github.com/VolkovIlia/ReadyOrNot-PvP/releases)
-   и положите `RoNPvP.pak` в `<папка игры>\ReadyOrNot\Content\Paks\~mods\`.
-2. Друзьям: подписаться на мод **или** один раз включить «Настройки → Игра → Подключаться к серверам с модами» —
-   игра помечает лобби хоста с модами как «модифицированное» и без этого его не показывает.
-3. Начните ко-оп миссию — на экране подготовки откроется меню команд.
+The mod needs nothing but the game: its logic is started by the game's own mod mechanism (`ModActorSpawnData`).
 
-Pak-версия работает без UE4SS: логику запускает штатный механизм модов игры (`ModActorSpawnData`). Если стоит и
-UE4SS-версия, она уступает миссию pak-версии.
+## Legacy: UE4SS installer
 
-## Установка установщиком (UE4SS)
-
-1. Закройте игру.
-2. Скачайте `RoN-PvP-…-alpha.zip` со страницы [Releases](https://github.com/VolkovIlia/ReadyOrNot-PvP/releases)
-   и распакуйте в любую папку.
-3. Запустите **`Install.bat`**. Он сам найдёт игру в Steam и поставит мод вместе с загрузчиком
-   [RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS). Если UE4SS уже стоит, установщик его не трогает.
-   - Если Windows спросит про неизвестного издателя: «Подробнее» → «Выполнить в любом случае».
-   - Если игра не нашлась, установщик попросит путь: Steam → Ready or Not → «Управление» → «Просмотреть локальные файлы».
-4. Запустите игру и начните ко-оп миссию — на экране подготовки откроется меню команд.
-
-Удаление — `Uninstall.bat` из того же архива: он убирает мод и UE4SS, если тот не нужен другим модам.
-Обновление — запустить `Install.bat` новой версии, настройки сохранятся.
+Not developed since 0.2.1: no rule sets, doors or gun pickup. It filters suspects' radio reports and yells, hides
+mission score popups and limits spectating to one's own team, which the Mods-menu version cannot do. If both are
+installed, the installer version leaves the mission to the Mods-menu version.
 
 <details>
-<summary>Ручная установка</summary>
+<summary>Install with the installer</summary>
 
-1. Поставьте [RE-UE4SS experimental](https://github.com/UE4SS-RE/RE-UE4SS/releases/tag/experimental-latest)
-   (проверено с `v3.0.1-1183-gcdbc0b66`): содержимое архива — в `<папка игры>\ReadyOrNot\Binaries\Win64\`,
-   рядом с `ReadyOrNotSteam-Win64-Shipping.exe` должны лечь `dwmapi.dll` и папка `ue4ss`.
-2. Из архива мода скопируйте `game\ue4ss\Mods\HostBrain` в `<папка игры>\ReadyOrNot\Binaries\Win64\ue4ss\Mods\`.
-3. В `ue4ss\UE4SS.log` после запуска игры должна быть строка `[HostBrain] … loaded`.
+1. Close the game.
+2. Download `RoN-PvP-…-alpha.zip` from [Releases](https://github.com/VolkovIlia/ReadyOrNot-PvP/releases)
+   and unzip it into any folder.
+3. Run **`Install.bat`**. It finds the game through Steam and installs the mod together with the
+   [RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) loader. If UE4SS is already installed, the installer leaves it
+   alone.
+   - If Windows warns about an unknown publisher: "More info" > "Run anyway".
+   - If the game is not found, the installer asks for its path: Steam > Ready or Not > "Manage" > "Browse local files".
+4. Start the game and begin a co-op mission: the team menu opens on the pre-mission screen.
+
+Uninstall: run `Uninstall.bat` from the same archive. It removes the mod, and UE4SS too unless other mods need it.
+Update: run `Install.bat` of the new version; your settings are kept.
+
+<details>
+<summary>Manual install</summary>
+
+1. Install [RE-UE4SS experimental](https://github.com/UE4SS-RE/RE-UE4SS/releases/tag/experimental-latest)
+   (tested with `v3.0.1-1183-gcdbc0b66`): extract the archive into `<game folder>\ReadyOrNot\Binaries\Win64\`, so that
+   `dwmapi.dll` and the `ue4ss` folder end up next to `ReadyOrNotSteam-Win64-Shipping.exe`.
+2. From the mod archive, copy `game\ue4ss\Mods\HostBrain` into `<game folder>\ReadyOrNot\Binaries\Win64\ue4ss\Mods\`.
+3. After you start the game, `ue4ss\UE4SS.log` should contain the line `[HostBrain] … loaded`.
 </details>
 
-Антивирус может ругаться на `dwmapi.dll` — это загрузчик UE4SS, так он встраивается в игру.
-Консоль игры (`~`) нужна только для команд из раздела [«Команды хоста»](#команды-хоста); её включает встроенный в
-UE4SS `ConsoleEnablerMod`.
+Antivirus software may flag `dwmapi.dll`: it is the UE4SS loader, and this is how it gets into the game.
+The game console (`~`) is needed only for the commands in [Host commands](#host-commands-legacy-installer); it is
+enabled by `ConsoleEnablerMod`, which ships with UE4SS.
+</details>
 
-## Как играть
+## How to play
 
-1. Хост запускает игру с модом, создаёт лобби в «Игра по сети», друзья заходят. Лобби на 10 мест создаётся после
-   загрузки мода.
-2. Хост выбирает любую ко-оп миссию (например, «Слон» на кампусе). На экране подготовки у хоста открывается меню
-   «Выберите команду»:
-   - «Вступить» в карточке SWAT или подозреваемых, «Автовыбор» — в меньшую команду;
-   - настройки: боты SWAT, их меткость, время раунда (3–30 мин), «Матч: до N побед», смена сторон;
-   - «Готов» — миссия ждёт эту кнопку.
+1. The host starts the game with the mod and creates a lobby in Multiplayer; friends join. Lobbies created after the
+   mod has loaded have 10 slots.
+2. The host picks any co-op mission (for example, "Elephant" on the campus). On the pre-mission screen the host gets
+   the «ВЫБЕРИТЕ КОМАНДУ» (Choose a team) menu:
+   - «ВСТУПИТЬ» (Join) on the SWAT or suspect card; «АВТОВЫБОР» (Auto-pick) puts you in the smaller team;
+   - settings: SWAT bots, their accuracy, round time (3–30 min), «МАТЧ: ДО N ПОБЕД» (Match: first to N wins), side
+     swap, «ПРАВИЛА: ВАНИЛЬНЫЕ / УРАВНЕННЫЕ» (Rules: vanilla / balanced);
+   - «ГОТОВ» (Ready): the mission waits for this button.
 
-   Остальные игроки выбирают сторону в чате: `!suspect` или `!swat`, состав команд — `!teams`.
-3. Начинается раунд. Если подозреваемых никто не выбрал, идёт обычная ко-оп миссия.
-4. После раунда у хоста страница итогов со счётом и отсчётом; через 8 с следующий раунд стартует сам.
-   После решающего раунда — «Матч окончен» и кнопка «Новый матч».
+   The other players pick a side in chat: `!suspect` or `!swat`; `!teams` shows the teams.
+3. The round starts. If nobody picked the suspects, it is a normal co-op mission.
+4. After a round the host sees a results page with the score and a countdown; the next round starts by itself after
+   8 s. After the deciding round the page shows «МАТЧ ОКОНЧЕН» (Match over) and a «НОВЫЙ МАТЧ» (New match) button.
 
-Одному: начать ко-оп миссию, в карточке подозреваемых нажать «Вступить», затем «Готов». Вы воюете вместе с
-ИИ-подозреваемыми против ИИ-отряда SWAT, а после смены сторон — за SWAT с ботами.
+Playing alone: start a co-op mission, press «ВСТУПИТЬ» (Join) on the suspect card, then «ГОТОВ» (Ready). You fight
+together with the AI suspects against the AI SWAT squad, and after the side swap you play SWAT with the bots.
 
-## Правила
+## Rules
 
-- **SWAT** играют по обычным правилам миссии и в раунде не возрождаются. SWAT берёт раунд, когда нейтрализованы все
-  ИИ-подозреваемые и игроки-подозреваемые, а вселяться больше некуда.
-- **Подозреваемые** берут раунд, если выбыли все игроки SWAT (боты не считаются; без игроков SWAT — весь ИИ-отряд)
-  или вышло время раунда.
-- **Раунды.**
-  - Раунд кончается внутри миссии, без штатного экрана итогов: итог приходит всем в чат, через 6 с миссия
-    загружается заново.
-  - Смена сторон после N−1 раунда (в матче до 3 побед — после второго), счёт переходит вместе с игроками.
-- **Подозреваемый** появляется на месте случайного ИИ-подозреваемого, этот ИИ уходит из миссии.
-  - Оружие похоже на оружие ИИ, но основное — всегда винтовка под FMJ (AKM и SMG → SLR-47, G3 и дробовики → FAL,
-    Makarov → M92 и т.п.): пистолет-калибр не пробивает броню SWAT.
-  - Брони, шлема, ПНВ, гранат и SWAT-устройств нет. Одежда — штатный образец игры для игрока-подозреваемого;
-    сохранённую внешность игрока это не меняет.
-- **Вселение.** Через 10 с после смерти игрок вселяется в живого ИИ-подозреваемого, которого не видит ни один SWAT
-  и который дальше 10 м от них. Когда ИИ кончились, игрок до конца раунда наблюдает за своими.
-- **Запреты для подозреваемых.** Нельзя кричать «на пол», докладывать в TOC, арестовывать и уводить гражданских,
-  взаимодействовать с персонажами. Двери, лестницы и предметы доступны.
-- **Без очков миссии.** Пока идёт матч, всплывающие «+N» очков не показываются никому.
-- **ИИ-отряд SWAT** носит броню игрока-SWAT по умолчанию (кевлар) вместо своей керамики и стали, которые
-  в корпус не пробивает ни один патрон игры. Здоровья у ботов по-прежнему больше, чем у игрока (250 против 160).
+- **SWAT** play by the normal mission rules and do not respawn during a round. SWAT win the round when all AI
+  suspects and suspect players are neutralized and there is no AI suspect left to take over.
+- **Suspects** win the round if all SWAT players are out (bots do not count; with no SWAT players, the whole AI
+  squad) or the round time runs out.
+- **Rounds.**
+  - A round ends inside the mission, without the standard debriefing screen: everyone gets the result in chat, and
+    the mission reloads 6 s later.
+  - Sides swap after round N−1 (after the second round in a match to 3 wins); the score moves with the players.
+- **A suspect** spawns in place of a random AI suspect, and that AI leaves the mission.
+  - Weapons are the player versions of the AI's guns (AKM → SLR-47, G3 → FAL, Calico → MP5, Makarov → M92, and so
+    on). Vanilla rules keep the AI's kit as it is. Balanced rules make the primary always a rifle firing FMJ (SMGs →
+    SLR-47, shotguns → FAL, a random rifle when the AI had none): pistol calibres do not penetrate SWAT armour.
+  - No armour, helmet, NVGs, grenades or SWAT devices. The clothing is the game's own preset for a suspect player;
+    it does not change the player's saved appearance.
+- **Takeover.** 10 s after a death the player takes over a living AI suspect that no SWAT can see and that is more
+  than 10 m away from them. When no AI suspects are left, the player spectates their own team until the round ends.
+- **Doors.** Suspects open any door, locked ones too (the game's own `Door.bSuspectAlwaysUnlocks` rule). A door
+  that was locked locks again when a suspect closes it; SWAT still have to pick, breach or kick it.
+- **Dropped guns.** A suspect who collects a dropped gun as evidence (holds the use key on it) gets the gun instead:
+  a SWAT gun as it is, an AI suspect's gun as its player version. It takes the place of the primary or the pistol.
+- **The AI SWAT squad** keeps its own ceramic and steel plates under vanilla rules; no round in the game penetrates
+  them in the torso. Under balanced rules it wears the default SWAT player armour (Kevlar). Bots have more health
+  than players either way (250 vs 160).
 
-## Команды хоста
+## Host commands (legacy installer)
 
-Меню закрывает всё нужное для игры; консоль — для тонкой настройки.
+The Mods-menu version is run from its menu and the chat (`!swat`, `!suspect`, `!teams`). The legacy installer
+version also has console commands:
 
 ```
-comp_pvp here|<карта> [минуты] [bots|nobots]   включить режим вручную (here — на этой миссии)
-comp_pvp_auto on|off              меню команд на экране подготовки любой ко-оп миссии (по умолчанию вкл.)
-comp_pvp_team <игрок|me> swat|suspect
-comp_pvp_time 10 10               время раунда, мин, и задержка вселения, с
-comp_pvp_bots on|off [меткость]   ИИ-отряд SWAT и его меткость (1 = обычная, больше = хуже)
-comp_pvp_rounds [побед] [0|1]     матч до N побед и смена сторон
-comp_pvp_endround swat|suspects   закончить идущий раунд победой стороны
-comp_pvp_status / comp_pvp_end    состояние / выключить режим
-comp_maxplayers [n]               мест в следующих лобби (по умолчанию 10, до 16)
-comp_status                       версия мода, защита, состояние игры
+comp_pvp here|<map> [minutes] [bots|nobots]   turn the mode on manually (here = on this mission)
+comp_pvp_auto on|off              team menu on the pre-mission screen of any co-op mission (on by default)
+comp_pvp_team <player|me> swat|suspect
+comp_pvp_time 10 10               round time, min, and takeover delay, s
+comp_pvp_bots on|off [accuracy]   AI SWAT squad and its accuracy (1 = normal, higher = worse)
+comp_pvp_rounds [wins] [0|1]      match to N wins and side swap
+comp_pvp_endround swat|suspects   end the current round as a win for that side
+comp_pvp_status / comp_pvp_end    status / turn the mode off
+comp_maxplayers [n]               slots in the next lobbies (10 by default, up to 16)
+comp_status                       mod version, protections, game state
 ```
-Настройки сохраняются в `Mods\HostBrain\settings.txt`.
+Settings are saved in `Mods\HostBrain\settings.txt`.
 
-## Известные ограничения
+## Known limitations
 
-- Меню и сообщения мода пока только на русском.
-- Сетевая игра с живыми соперниками проверена мало: смотрите [чек-лист](docs/pvp-playtest.md).
-- У клиентов-подозреваемых остаётся панель отряда SWAT: у ванильного клиента её не скрыть.
-- Анимация и голос доклада по рации у самого подозреваемого проигрываются, но сервер доклад не принимает.
-- Если в раунде погибли все игроки, может на секунду мелькнуть штатный экран итогов перед загрузкой следующего раунда.
-- Игроки-SWAT в керамике или стали почти неуязвимы для подозреваемых в корпус — цельтесь в голову и конечности.
-- Обновление игры может сломать мод: он опирается на внутренние функции игры.
+- The mod's menu and messages are in Russian only for now.
+- Network play against live opponents has seen little testing: see the [checklist](docs/pvp-playtest.md).
+- Suspect players can still use SWAT radio reports and yells, mission score popups still show and dead players may
+  spectate anyone: blocking that needs native code, which a Mods-menu mod cannot load.
+- Suspects on clients still see the SWAT squad panel: it cannot be hidden on a vanilla client.
+- A suspect's own radio report animation and voice still play, but the server does not accept the report.
+- If all players die in a round, the standard debriefing screen may flash for a second before the next round loads.
+- SWAT players in ceramic or steel armour are almost invulnerable to suspects in the torso: aim for the head and
+  limbs.
+- A game update may break the mod: it relies on the game's internal functions.
 
-## Сообщить об ошибке
+## Report a bug
 
-[Создайте issue](https://github.com/VolkovIlia/ReadyOrNot-PvP/issues/new/choose) и приложите с машины хоста:
-- `<папка игры>\ReadyOrNot\Binaries\Win64\ue4ss\UE4SS.log`;
-- `<папка игры>\ReadyOrNot\Binaries\Win64\ue4ss\Mods\HostBrain\native\RonCompNative.log`;
-- что делали, что ожидали, что произошло; скриншот, если что-то выглядело не так.
+[Open an issue](https://github.com/VolkovIlia/ReadyOrNot-PvP/issues/new/choose) and attach from the host's machine:
+- `%LOCALAPPDATA%\ReadyOrNot\Saved\SaveGames\RoNPvPLog.sav`, the mode's log;
+- with the legacy installer version: `<game folder>\ReadyOrNot\Binaries\Win64\ue4ss\UE4SS.log` and
+  `<game folder>\ReadyOrNot\Binaries\Win64\ue4ss\Mods\HostBrain\native\RonCompNative.log`;
+- what you did, what you expected and what happened; a screenshot if something looked wrong.
 
-## English
+## Development
 
-**Ready or Not PvP** turns any Ready or Not co-op mission into PvP: SWAT players against suspect players, in rounds
-with a halftime side swap. **Only the host installs it** — friends play the vanilla game.
+Building, how the mod works and reverse-engineering findings: [docs/development.md](docs/development.md),
+[docs/re-findings.md](docs/re-findings.md). Long-term plans (a mode with a bomb and an economy):
+[docs/design.md](docs/design.md). Version history: [CHANGELOG.md](CHANGELOG.md).
 
-> **Alpha.** Expect bugs. Please report them in [Issues](https://github.com/VolkovIlia/ReadyOrNot-PvP/issues/new/choose)
-> with the host's `ue4ss\UE4SS.log` and `ue4ss\Mods\HostBrain\native\RonCompNative.log`.
-> The in-game menu and messages are in Russian for now.
+## Legal
 
-- A team page on the host's pre-mission screen; others type `!swat` or `!suspect` in chat.
-- Rounds to N wins (default 3), round and match result pages, halftime swap.
-- Suspect players spawn in an AI suspect's place with suspect guns and clothes, no armour or SWAT gear, and after
-  a death take over another living AI suspect.
-- Optional AI SWAT squad: it fights for SWAT and hunts suspects on its own when no SWAT player is alive.
-- Suspects cannot arrest, yell or report to TOC; civilians stay neutral; no score popups; 10-player lobbies
-  (installer version; the Mods-menu version cannot filter those actions or hide score popups).
-
-Install (host), either:
-- **In-game Mods menu:** subscribe to **PvP - SWAT vs Suspects** ([mod.io page](https://mod.io/g/readyornot/m/pvp-swat-vs-suspects)) and restart the game (or put `RoNPvP.pak` from the
-  `-modio.zip` release asset into `ReadyOrNot\Content\Paks\~mods\`). Friends subscribe too, or turn on
-  "Join modded servers" once — the game hides modded lobbies otherwise.
-- **Installer:** download the [latest release](https://github.com/VolkovIlia/ReadyOrNot-PvP/releases), unzip
-  it and run **`Install.bat`** — it finds the game through Steam and installs the mod with
-  [RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS). Friends need nothing. `Uninstall.bat` removes it.
-
-## Разработка
-
-Сборка, устройство мода и находки реверса: [docs/development.md](docs/development.md),
-[docs/re-findings.md](docs/re-findings.md). Дальние планы (режим с бомбой и экономикой): [docs/design.md](docs/design.md).
-История версий: [CHANGELOG.md](CHANGELOG.md).
-
-## Правовое
-
-Неофициальный фанатский мод, не связан с VOID Interactive. Ассеты игры в репозиторий не входят; мод не использует
-утёкшие исходники игры и не копирует код других модов. Код — под лицензией [MIT](LICENSE).
+Unofficial fan mod, not affiliated with VOID Interactive. The repository contains no game assets; the mod does not
+use leaked game source code and does not copy code from other mods. The code is licensed under [MIT](LICENSE).

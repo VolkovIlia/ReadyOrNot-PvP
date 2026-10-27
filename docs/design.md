@@ -1,96 +1,102 @@
-# Дизайн RoN Competitive
+# RoN Competitive design
 
-## Принцип
-Один общий pak у всех + «мозг» правил только у хоста.
+## Principle
+One shared pak for everyone + the rules "brain" on the host only.
 
-| Где | Что | Как ставится |
+| Where | What | How it is installed |
 |---|---|---|
-| Все игроки | Общий pak: Blueprint-акторы с реплицируемым состоянием, виджеты, `DT_CompItems` | mod.io / `~mods` |
-| Только хост | RE-UE4SS + HostBrain (C++): правила, экономика, хуки, лимит лобби 10 | GitHub / Nexus |
-| Опционально, клиент | Аддон для подробного net graph | GitHub / Nexus |
+| All players | Shared pak: Blueprint actors with replicated state, widgets, `DT_CompItems` | mod.io / `~mods` |
+| Host only | RE-UE4SS + HostBrain (C++): rules, economy, hooks, lobby limit of 10 | GitHub / Nexus |
+| Optional, client | Add-on for a detailed net graph | GitHub / Nexus |
 
-Клиентам UE4SS не нужен. Pak у всех одинаковый, поэтому Server-Side Checksum проходит.
+Clients do not need UE4SS. The pak is the same for everyone, so the Server-Side Checksum passes.
 
-## Порядок работ (решение пользователя, 26.10.2026)
-1. **Нативный PvP без бомбы — так, как его задумали разработчики.** Встроенные режимы игры по алиасам:
-   `ff` (Firefight — раунды SWAT против подозреваемых на выбывание) и `tdm`. HostBrain только запускает их,
-   страхует от известных вылетов и включает серверную проверку попаданий.
-2. **Бомба** — Defusal (`RR_PVP`) с правилами CS2 из ядра (`HostBrain/src/core`).
-3. **Вывод заложников.**
+## Order of work (user's decision, 26.10.2026)
+1. **Native PvP without the bomb — the way the developers designed it.** The game's built-in modes through aliases:
+   `ff` (Firefight — elimination rounds of SWAT against suspects) and `tdm`. HostBrain only starts them, guards against
+   known crashes and turns on server-side hit validation.
+2. **Bomb** — Defusal (`RR_PVP`) with CS2 rules from the core (`HostBrain/src/core`).
+3. **Hostage extraction.**
 
-## Как устроен HostBrain сейчас (v0)
-Полноценный C++ мод UE4SS требует закрытого подмодуля `UEPseudo` (GitHub-аккаунт, привязанный к Epic), а
-`UE4SS.dll` не экспортирует Lua C API. Поэтому v0 состоит из двух частей:
-- **Lua-мод `HostBrain`** (`HostBrain/ue4ss-mods/HostBrain`) — всё, что делается через рефлексию: консольные команды
-  `comp_start <карта> [режим]`, `comp_status`, `comp_maps`, `comp_modes`, `comp_hitvalidation`; включение
-  `UHitRegistrationSettings.bEnableValidation` в CDO на хосте.
-- **`RonCompNative.dll`** (`HostBrain/native`, C++/MSVC, без сторонних библиотек) — нативные защиты. Lua подгружает её через
-  `package.loadlib`; функция-вход не трогает Lua-состояние, вход читает из `RonCompNative.ini`, результат пишет в
-  `RonCompNative.log`. Первая защита — детур нативной заглушки `Multicast_StopSequence`, отбрасывающий вызов с `nullptr`
-  до `ProcessEvent` (RPC не уходит клиентам). Заглушку находит по шаблону байт и FName-индексу, который передаёт Lua.
-- Ядро правил (`HostBrain/src/core`) собирается тем же CMake и ждёт этапа 2. Подключить его к игре можно,
-  когда появится доступ к `UEPseudo` (полный C++ API UE4SS) или через свою Lua-привязку внутри `RonCompNative`.
+## How HostBrain works now (v0)
+A full C++ UE4SS mod needs the private `UEPseudo` submodule (a GitHub account linked to Epic), and
+`UE4SS.dll` does not export the Lua C API. So v0 has two parts:
+- **The Lua mod `HostBrain`** (`HostBrain/ue4ss-mods/HostBrain`) — everything that can be done through reflection:
+  the console commands `comp_start <map> [mode]`, `comp_status`, `comp_maps`, `comp_modes`, `comp_hitvalidation`;
+  turning on `UHitRegistrationSettings.bEnableValidation` in the CDO on the host.
+- **`RonCompNative.dll`** (`HostBrain/native`, C++/MSVC, no third-party libraries) — native protections. Lua loads it
+  through `package.loadlib`; the entry function does not touch the Lua state, reads its input from
+  `RonCompNative.ini` and writes the result to `RonCompNative.log`. The first protection is a detour of the native
+  `Multicast_StopSequence` stub that drops a call with `nullptr` before `ProcessEvent` (the RPC is not sent to
+  clients). The DLL finds the stub by a byte pattern and the FName index that Lua passes in.
+- The rules core (`HostBrain/src/core`) is built by the same CMake and waits for stage 2. It can be connected to the
+  game once there is access to `UEPseudo` (the full UE4SS C++ API), or through our own Lua binding inside
+  `RonCompNative`.
 
-Сборка: `powershell -File tools/build_hostbrain.ps1`, деплой: `powershell -File tools/deploy_ue4ss_mods.ps1`.
+Build: `powershell -File tools/build_hostbrain.ps1`, deploy: `powershell -File tools/deploy_ue4ss_mods.ps1`.
 
-## Слои
-- **L0 — инструменты (не поставляются):** REA (статика exe, Frida, дифф версий), SDK-дамп (Dumper-7 + UE4SS),
-  стаб-проект UE 5.3, автоматизация Blueprint, сборка pak.
-- **L1 — общий pak** `/Game/Mods/RoNComp/`:
-  `BP_CompGameMode`, `BP_CompState`, `BP_CompPlayerProxy`, `BP_BombSite`, `BP_Bomb`, `BP_BuyZone`, `DT_CompItems`, виджеты.
+## Layers
+- **L0 — tools (not shipped):** REA (static exe analysis, Frida, version diffs), SDK dump (Dumper-7 + UE4SS),
+  a UE 5.3 stub project, Blueprint automation, pak build.
+- **L1 — shared pak** `/Game/Mods/RoNComp/`:
+  `BP_CompGameMode`, `BP_CompState`, `BP_CompPlayerProxy`, `BP_BombSite`, `BP_Bomb`, `BP_BuyZone`, `DT_CompItems`,
+  widgets.
 - **L2 — HostBrain:**
-  - `src/core` — чистое ядро: `Settings` (cvar), `Items` (каталог), `Match` (фазы, счёт, экономика, статистика);
-  - `src/adapters` — UE4SS-хуки, поиск по именам через рефлексию, проверка на старте.
+  - `src/core` — the pure core: `Settings` (cvar), `Items` (catalogue), `Match` (phases, score, economy, statistics);
+  - `src/adapters` — UE4SS hooks, lookup by name through reflection, startup check.
 
-## Стороны и фракции
-Ядро знает только стороны: `Attackers` (как T в CS: ставят бомбу) и `Defenders` (как CT: защищают и разминируют).
-Какая фракция за какую сторону играет, задаёт `mp_attackers_faction`. По умолчанию атакуют подозреваемые (MLO),
-защищается SWAT, как в CS.
+## Sides and factions
+The core knows only sides: `Attackers` (like T in CS: they plant the bomb) and `Defenders` (like CT: they defend and
+defuse). Which faction plays which side is set by `mp_attackers_faction`. By default the suspects (MLO) attack and
+SWAT defends, as in CS.
 
-> Открытый вопрос дизайна: в альфа-режиме RoN «Defusal» было наоборот — бомба уже стоит, подозреваемые её охраняют,
-> SWAT штурмует и разминирует. Этот вариант можно добавить вторым набором правил (`mp_objective defuse_only`).
+> Open design question: in RoN's alpha "Defusal" mode it was the other way round — the bomb is already planted, the
+> suspects guard it, SWAT storms in and defuses it. This variant can be added as a second rule set
+> (`mp_objective defuse_only`).
 
-Команда 0 начинает за атакующих. После 12-го раунда и на каждой половине овертайма стороны меняются.
+Team 0 starts as the attackers. Sides swap after round 12 and at every overtime half.
 
-## Правила матча (значения по умолчанию, всё настраивается в `data/competitive.cfg`)
+## Match rules (defaults; everything is configurable in `data/competitive.cfg`)
 
-**Фазы:** Warmup → FreezeTime → Live → (BombPlanted) → RoundEnd → [Halftime] → … → MatchEnd
+**Phases:** Warmup → FreezeTime → Live → (BombPlanted) → RoundEnd → [Halftime] → … → MatchEnd
 
-| Параметр | Значение |
+| Parameter | Value |
 |---|---|
-| Раундов в основное время | 24, победа при 13 |
-| Разминка | 60 с, бесконечные деньги, мгновенный респаун |
-| Freeze time | 15 с |
-| Время раунда | 1:55 |
-| Таймер бомбы | 40 с |
-| Время закупки | freeze time + 20 с, только в зоне закупки |
-| Пауза между раундами | 7 с |
-| Перерыв на смене сторон | 15 с |
-| Овертайм | при 12:12, по 6 раундов (MR3), стартовые деньги $12 500 на каждой половине |
+| Rounds in regulation | 24, 13 to win |
+| Warmup | 60 s, unlimited money, instant respawn |
+| Freeze time | 15 s |
+| Round time | 1:55 |
+| Bomb timer | 40 s |
+| Buy time | freeze time + 20 s, only in the buy zone |
+| Pause between rounds | 7 s |
+| Halftime break at the side swap | 15 s |
+| Overtime | at 12:12, 6 rounds each (MR3), starting money of $12,500 in each half |
 
-**Конец раунда:**
-- до установки бомбы: все атакующие убиты → победа защиты; все защитники убиты → победа атаки;
-  время вышло → победа защиты;
-- после установки: раунд идёт до взрыва (победа атаки) или разминирования (победа защиты). Устранение команды раунд не завершает.
+**End of a round:**
+- before the bomb is planted: all attackers dead → the defence wins; all defenders dead → the attack wins;
+  time runs out → the defence wins;
+- after the plant: the round goes on until the explosion (the attack wins) or the defuse (the defence wins).
+  Eliminating a team does not end the round.
 
-**Экономика:**
-- старт $800, максимум $16 000;
-- победа: $3 250 (устранение или время), $3 500 (взрыв или разминирование);
-- поражение: лестница $1 400 → $1 900 → $2 400 → $2 900 → $3 400. Счётчик поражений в начале каждой половины равен 1,
-  поэтому проигравший пистолетный раунд получает $1 900. Победа уменьшает счётчик на 1;
-- атакующие, выжившие при истечении времени, бонус за поражение не получают;
-- бомба установлена, но раунд проигран: +$800 каждому атакующему;
-- установил бомбу: +$300, разминировал: +$300;
-- награда за убийство зависит от класса оружия (`items.csv`); убийство союзника: −$300;
-- на смене сторон и на каждой половине овертайма деньги сбрасываются до стартовых.
+**Economy:**
+- start $800, maximum $16,000;
+- win: $3,250 (elimination or time), $3,500 (explosion or defuse);
+- loss: a ladder of $1,400 → $1,900 → $2,400 → $2,900 → $3,400. The loss counter is 1 at the start of each half,
+  so the loser of the pistol round gets $1,900. A win lowers the counter by 1;
+- attackers who are alive when time runs out get no loss bonus;
+- bomb planted but round lost: +$800 to each attacker;
+- planting the bomb: +$300, defusing it: +$300;
+- the kill reward depends on the weapon class (`items.csv`); killing a teammate: −$300;
+- at the side swap and at every overtime half, money resets to the starting amount.
 
-**Статистика:** K/D/A, урон, ADR, хедшоты, MVP. Ассист — больше 40 урона по жертве, если игрок не убийца.
-MVP: при взрыве — установивший бомбу, при разминировании — разминировавший; иначе игрок победившей команды
-с наибольшим числом убийств (при равенстве — по урону).
+**Statistics:** K/D/A, damage, ADR, headshots, MVP. An assist is more than 40 damage to the victim when the player
+is not the killer.
+MVP: on an explosion, the player who planted the bomb; on a defuse, the defuser; otherwise the player of the winning
+team with the most kills (ties broken by damage).
 
-## Поток событий
-Адаптеры передают в ядро игровые события: `OnDamage`, `OnKill`, `OnBombPlanted`, `OnBombDefused`, `TryBuy`,
-подключение и выход игрока.
-Ядро отвечает событиями для адаптеров: `PhaseChanged`, `RoundStarted` (респаун, сброс инвентаря), `RoundEnded`,
+## Event flow
+The adapters pass game events to the core: `OnDamage`, `OnKill`, `OnBombPlanted`, `OnBombDefused`, `TryBuy`,
+player connect and leave.
+The core answers with events for the adapters: `PhaseChanged`, `RoundStarted` (respawn, inventory reset), `RoundEnded`,
 `MoneyChanged`, `GiveBomb`, `ItemPurchased`, `SidesSwapped`, `MatchEnded`.
-Адаптеры исполняют эти события в игре и пишут их в реплицируемый `BP_CompState`.
+The adapters carry out these events in the game and write them into the replicated `BP_CompState`.

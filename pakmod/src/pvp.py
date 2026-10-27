@@ -15,9 +15,15 @@
 
 SWAT = 2
 SUSPECT = 3
+# rule sets the host picks in the menu (PvPState.Rules): the AI as the mission built them, or more chances
+# for the suspects (rifles for suspect players, the AI squad in a SWAT player's default Kevlar)
+RULES_VANILLA = 0
+RULES_BALANCED = 1
+# EEvidenceActorState::Collected
+EVIDENCE_COLLECTED = 1
 SQUAD = 5
 SLOT = "RoNPvP"
-VERSION = "0.2.1-alpha"
+VERSION = "0.3.0-alpha"
 COOP_MODE = "BS_COOP"
 RESPAWN_DELAY = 10.0
 SAFE_DISTANCE = 1000.0
@@ -57,6 +63,7 @@ class PvPSave(SaveGame):
     RoundsToWin: int
     Swap: bool
     BotAccuracy: float
+    Rules: int
 
 
 @blueprint("/Game/Mods/RoNPvP/BP_PvPLog")
@@ -75,6 +82,7 @@ class PvPState(Object):
     RoundsToWin: int
     Swap: bool
     BotAccuracy: float
+    Rules: int
     Active: bool
     AutoMatch: bool
     Phase: str
@@ -116,6 +124,11 @@ class PvPDirector(Actor):
     DeathWhere: Map[str, Vector]
     DeathTold: Map[str, bool]
     Stripped: List[Actor]
+    LockedDoors: List[Door]
+    DoorsReady: bool
+    PickupBy: Map[BaseMagazineWeapon, ReadyOrNotCharacter]
+    PickupPath: Map[BaseMagazineWeapon, str]
+    PickupAt: float
     Removed: List[Actor]
     SquadSeen: bool
     HostWait: float
@@ -175,6 +188,7 @@ class PvPDirector(Actor):
     MinutesButton: W_StandardButton_C
     RoundsButton: W_StandardButton_C
     SwapButton: W_StandardButton_C
+    RulesButton: W_StandardButton_C
     ReadyButton: W_StandardButton_C
     ResTop: TextBlock
     ResWinner: TextBlock
@@ -202,11 +216,11 @@ class PvPDirector(Actor):
         self.Weapons = {
             "Primary_AKM": "Primary_SLR47", "Primary_S_AK103": "Primary_SLR47", "Primary_AK104": "Primary_SLR47",
             "Primary_AKS74U": "Primary_SLR47", "Primary_QBZ": "Primary_SLR47", "Primary_CAR": "Primary_SBR",
-            "Primary_Calico": "Primary_SLR47", "Primary_UZI": "Primary_SLR47", "Primary_M249": "Primary_FAL",
+            "Primary_Calico": "Primary_MP5A2", "Primary_UZI": "Primary_MP9", "Primary_M249": "Primary_FAL",
             "Primary_RPD": "Primary_FAL", "Primary_S_G3A3": "Primary_FAL", "Primary_S_MK18_VAR1": "Primary_MK18",
             "Primary_S_MK18_VAR2": "Primary_MK18", "Primary_S_MK18_VAR3_CMAG": "Primary_MK18",
-            "Primary_M37": "Primary_FAL", "Primary_S_870mcs": "Primary_FAL", "Primary_SawnOff": "Primary_FAL",
-            "Primary_Trenchgun": "Primary_FAL", "Secondary_Makarov": "Secondary_M92FS_V2",
+            "Primary_M37": "Primary_870mcs", "Primary_S_870mcs": "Primary_870mcs", "Primary_SawnOff": "Primary_870mcs",
+            "Primary_Trenchgun": "Primary_870mcs", "Secondary_Makarov": "Secondary_M92FS_V2",
             "Secondary_Makarov_2Handed": "Secondary_M92FS_V2", "Secondary_S_G18": "Secondary_G19_V2",
             "Secondary_S_G19": "Secondary_G19_V2", "Secondary_S_M1911": "Secondary_M1911_V2",
             "Secondary_S_Python": "Secondary_Python_V2", "Secondary_Tec9": "Secondary_P99",
@@ -264,6 +278,7 @@ class PvPDirector(Actor):
                 st.RoundsToWin = save.RoundsToWin
                 st.Swap = save.Swap
                 st.BotAccuracy = save.BotAccuracy
+                st.Rules = save.Rules
         if st.Minutes < 1:
             st.Minutes = 10
         if st.RoundsToWin < 1:
@@ -280,6 +295,7 @@ class PvPDirector(Actor):
         save.RoundsToWin = st.RoundsToWin
         save.Swap = st.Swap
         save.BotAccuracy = st.BotAccuracy
+        save.Rules = st.Rules
         SaveGameToSlot(save, SLOT, 0)
 
     def Log(self, text: str):
@@ -556,7 +572,7 @@ class PvPDirector(Actor):
         self.ConvertPrimary[name] = self.GunPrimary
         self.ConvertSecondary[name] = self.GunSecondary
         self.PrepareSuspectSpawn(self.StateOf(pc), self.GunPrimary, self.GunSecondary)
-        return self.WeaponTitle(self.GunPrimary) + " + " + self.WeaponTitle(self.GunSecondary)
+        return self.GunsTitle(self.GunPrimary, self.GunSecondary)
 
     def PlaceAt(self, pawn: ReadyOrNotCharacter, spot: Vector, yaw: float):
         if not pawn.K2_TeleportTo(Vector(X=spot.X, Y=spot.Y, Z=spot.Z + 10.0), Rotator(Pitch=0.0, Yaw=yaw, Roll=0.0)):
@@ -605,7 +621,7 @@ class PvPDirector(Actor):
         self.Suspects[name] = True
         self.DeathAt.remove(name)
         self.Log(f"{name} took an AI suspect's place ({stripped} SWAT items removed)")
-        self.Tell(pc, f"Вы — подозреваемый: {self.WeaponTitle(primary)} + {self.WeaponTitle(secondary)}. ИИ-подозреваемых в запасе: {len(self.LivingAiSuspects())}")
+        self.Tell(pc, f"Вы — подозреваемый: {self.GunsTitle(primary, secondary)}. ИИ-подозреваемых в запасе: {len(self.LivingAiSuspects())}")
 
     def TakeOver(self, pc: ReadyOrNotPlayerController, ai: SuspectCharacter) -> bool:
         """After a suspect player's death the player's new character is spawned right on the AI suspect's
@@ -690,10 +706,18 @@ class PvPDirector(Actor):
         return title
 
     def RandomPrimary(self) -> str:
-        """Suspect players get rifles with full metal jacket rounds (penetration 4): pistol-calibre SMGs and
-        buckshot (penetration 0-2) do not get through even a SWAT player's default Kevlar (armour level 3)."""
+        """Balanced rules: suspect players get rifles with full metal jacket rounds (penetration 4)."""
         names: List[str] = ["Primary_SLR47", "Primary_FAL"]
         return names[RandomIntegerInRange(0, 1)]
+
+    def Rifle(self, name: str) -> str:
+        """Balanced rules: pistol-calibre SMGs and buckshot (penetration 0-2) do not get through even a SWAT
+        player's default Kevlar (armour level 3), so they become the SLR-47 and the FAL."""
+        if name == "Primary_MP5A2" or name == "Primary_MP9":
+            return "Primary_SLR47"
+        if name == "Primary_870mcs":
+            return "Primary_FAL"
+        return name
 
     def RandomSecondary(self) -> str:
         names: List[str] = ["Secondary_M1911_V2", "Secondary_M92FS_V2", "Secondary_G19_V2", "Secondary_Python_V2", "Secondary_P99"]
@@ -706,9 +730,10 @@ class PvPDirector(Actor):
         return name
 
     def GunsFor(self, ai: ReadyOrNotCharacter):
-        """Player guns of the same kind as the AI suspect's (GunPrimary, GunSecondary); a random suspect-style
-        pair fills what is missing. AKs become the SLR-47 and the G3 and machine guns the FAL (their
-        handling throws the sights about when a player aims while stepping sideways)."""
+        """Player guns of the same kind as the AI suspect's (GunPrimary, GunSecondary). AKs become the SLR-47
+        and the G3 and machine guns the FAL (their handling throws the sights about when a player aims while
+        stepping sideways). Vanilla rules keep the AI's kit as it is (an AI with a pistol only gives a pistol
+        only); balanced rules turn SMGs and shotguns into rifles and fill a missing slot at random."""
         self.GunPrimary = ""
         self.GunSecondary = ""
         for item in ai.InventoryComp.InventoryItems:
@@ -720,15 +745,37 @@ class PvPDirector(Actor):
                     self.GunPrimary = self.Weapons[name]
                 if StartsWith(name, "Secondary_", 0) and self.GunSecondary == "":
                     self.GunSecondary = self.Weapons[name]
-        if self.GunPrimary == "":
-            self.GunPrimary = self.RandomPrimary()
-        if self.GunSecondary == "":
+        if self.State.Rules == RULES_BALANCED:
+            if self.GunPrimary == "":
+                self.GunPrimary = self.RandomPrimary()
+            self.GunPrimary = self.Rifle(self.GunPrimary)
+            if self.GunSecondary == "":
+                self.GunSecondary = self.RandomSecondary()
+        elif self.GunPrimary == "" and self.GunSecondary == "":
             self.GunSecondary = self.RandomSecondary()
 
+    def WeaponPath(self, name: str) -> str:
+        if name == "":
+            return ""
+        return "/Game/Blueprints/Items/WeaponsRevised/" + name + "." + name + "_C"
+
+    def GunsTitle(self, primary: str, secondary: str) -> str:
+        if primary == "":
+            return self.WeaponTitle(secondary)
+        if secondary == "":
+            return self.WeaponTitle(primary)
+        return self.WeaponTitle(primary) + " + " + self.WeaponTitle(secondary)
+
     def SuspectLoadout(self, primary: str, secondary: str) -> SavedLoadout:
+        return self.KitLoadout(self.WeaponPath(primary), self.WeaponPath(secondary))
+
+    def KitLoadout(self, primary_path: str, secondary_path: str) -> SavedLoadout:
+        """The suspect kit: the guns (class paths, "" for an empty slot), no armour, no helmet, no grenades."""
         loadout = SavedLoadout(PrimaryAmmoSlotsCount=-1, SecondaryAmmoSlotsCount=-1, GrenadeSlotsCount=0, TacticalSlotsCount=0)
-        loadout.Primary = self.PlayerWeapon(primary)
-        loadout.Secondary = self.PlayerWeapon(secondary)
+        if primary_path != "":
+            loadout.Primary = self.LoadClassPath(primary_path)
+        if secondary_path != "":
+            loadout.Secondary = self.LoadClassPath(secondary_path)
         loadout.Armor = self.LoadClassPath("/Game/Blueprints/Items/ArmorRevised/Armor_NoArmor.Armor_NoArmor_C")
         loadout.Helmet = self.LoadClassPath("/Game/Blueprints/Items/ArmorRevised/Helmet_None.Helmet_None_C")
         return loadout
@@ -746,8 +793,12 @@ class PvPDirector(Actor):
     def EquipSuspectKit(self, pawn: ReadyOrNotCharacter, primary: str, secondary: str) -> bool:
         """The mission-start spawn does not take ServerSavedLoadout, so the kit is equipped directly
         (the "none" armour and helmet replace the SWAT ones)."""
-        options = LoadoutEquipOptions(EquipItemCategory=1, bReplicates=True, bSanitizeLoadout=False)
-        return EquipLoadoutOnPlayer(self.SuspectLoadout(primary, secondary), pawn, options)
+        return self.EquipKit(pawn, self.SuspectLoadout(primary, secondary), primary != "")
+
+    def EquipKit(self, pawn: ReadyOrNotCharacter, loadout: SavedLoadout, primary_in_hands: bool) -> bool:
+        # EquipItemCategory: IC_Primary 1, IC_Secondary 2 (a pistol-only kit draws the pistol)
+        options = LoadoutEquipOptions(EquipItemCategory=1 if primary_in_hands else 2, bReplicates=True, bSanitizeLoadout=False)
+        return EquipLoadoutOnPlayer(loadout, pawn, options)
 
     def ApplySuspectOutfit(self, state: ReadyOrNotPlayerState):
         """The game's suspect clothes through the replicated PlayerState.Customization; bForceLiveUpdate
@@ -779,12 +830,116 @@ class PvPDirector(Actor):
                 if weapon.GetMagazineCount() == 0 or not weapon.HasAnyAmmo():
                     weapon.ReplenishAmmo()
 
+    # ================================================================ doors and dropped guns
+
+    def DoorsTick(self):
+        """Suspects open any door: Door.bSuspectAlwaysUnlocks lets team 3 through a locked door (the game's own
+        rule in CanOpenDoor and in the opening itself), SWAT still find it locked. Opening unlocks a door, so a
+        door locked at the round start locks again once it is closed and a suspect used it last (a SWAT
+        lockpick or breach stays). bSuspectKnowsLockState stays off, so a client's own check lets a suspect
+        player try the door."""
+        if not self.DoorsReady:
+            self.DoorsReady = True
+            for actor in GetAllActorsOfClass(Door):
+                door = cast(actor, Door)
+                if door:
+                    door.bSuspectAlwaysUnlocks = True
+                    door.bSuspectKnowsLockState = False
+                    if door.IsLocked():
+                        self.LockedDoors.append(door)
+            self.Log(f"doors: suspects open all of them, {len(self.LockedDoors)} locked")
+        for door in self.LockedDoors:
+            if door.IsLocked() or door.bDoorBroken or not door.IsClosed():
+                continue
+            user = door.GetLastDoorUser()
+            if user and user.DefaultTeam == SUSPECT:
+                door.SetLocked(True)
+                door.bSuspectKnowsLockState = False
+
+    def PickupTarget(self, gun: BaseMagazineWeapon) -> str:
+        """The class path a suspect player gets for a dropped gun: a player gun as it is, an AI suspect's gun as
+        its player version (balanced rules: a rifle for an SMG or a shotgun); "" for anything else."""
+        name = self.ClassName(gun)
+        path = GetPathName(GetObjectClass(gun))
+        if Contains(path, "/WeaponsRevised/", False, False):
+            if StartsWith(name, "Primary_", 0) or StartsWith(name, "Secondary_", 0):
+                return path
+            return ""
+        if name in self.Weapons:
+            target = self.Weapons[name]
+            if self.State.Rules == RULES_BALANCED:
+                target = self.Rifle(target)
+            return self.WeaponPath(target)
+        return ""
+
+    def PickupTick(self, now: float):
+        """A suspect player who collects a dropped gun as evidence (holds the use key on it) gets the gun
+        instead. The collector is noted while the evidence is being collected (EvidenceComponent.
+        CollectingCharacter, known on the server); the gun is handed over once the collection is done."""
+        if now < self.PickupAt:
+            return
+        self.PickupAt = now + 0.2
+        for actor in GetAllActorsOfClass(BaseMagazineWeapon):
+            gun = cast(actor, BaseMagazineWeapon)
+            if not gun or not gun.EvidenceComponent:
+                continue
+            evidence = gun.EvidenceComponent
+            if evidence.bIsBeingCollected:
+                collector = evidence.CollectingCharacter
+                if collector and not (gun in self.PickupBy) and collector.DefaultTeam == SUSPECT \
+                        and cast(collector.Controller, ReadyOrNotPlayerController):
+                    path = self.PickupTarget(gun)
+                    if path != "":
+                        self.PickupBy[gun] = collector
+                        self.PickupPath[gun] = path
+            elif gun in self.PickupBy and evidence.GetEvidenceState() != EVIDENCE_COLLECTED:
+                # the collection was broken off
+                self.PickupBy.remove(gun)
+                self.PickupPath.remove(gun)
+        done: List[BaseMagazineWeapon] = []
+        for gun in self.PickupBy:
+            if not IsValid(gun) or gun.EvidenceComponent.GetEvidenceState() == EVIDENCE_COLLECTED:
+                done.append(gun)
+        for gun in done:
+            pawn = self.PickupBy[gun]
+            path = self.PickupPath[gun]
+            self.PickupBy.remove(gun)
+            self.PickupPath.remove(gun)
+            if pawn and not self.IsDown(pawn):
+                self.GrantGun(pawn, path)
+
+    def GrantGun(self, pawn: ReadyOrNotCharacter, path: str):
+        """The picked-up gun takes its slot in the suspect kit; the other gun stays."""
+        primary = ""
+        secondary = ""
+        for item in pawn.InventoryComp.InventoryItems:
+            if item:
+                name = self.ClassName(item)
+                if StartsWith(name, "Primary_", 0) and primary == "":
+                    primary = GetPathName(GetObjectClass(item))
+                if StartsWith(name, "Secondary_", 0) and secondary == "":
+                    secondary = GetPathName(GetObjectClass(item))
+        is_primary = Contains(path, ".Primary_", False, False)
+        if is_primary:
+            primary = path
+        else:
+            secondary = path
+        self.EquipKit(pawn, self.KitLoadout(primary, secondary), is_primary)
+        self.FillMagazines(pawn)
+        found, left, right = Split(path, ".", 1, 1)
+        title = self.WeaponTitle(LeftChop(right, 2)) if found else path
+        pc = cast(pawn.Controller, ReadyOrNotPlayerController)
+        self.Log(f"{self.NameOf(pc)} picked up {title}")
+        self.Tell(pc, "Подобрано: " + title)
+
     # ================================================================ AI SWAT against suspect players
 
     def ArmourSquad(self):
         """The AI squad wears ceramic or steel plates (armour level 6) that no bullet in the game goes through
         until a ceramic plate wears out, and steel never does: suspect players could only wound them in the
-        limbs. In PvP the squad wears the default SWAT player's Kevlar instead, as a SWAT player would."""
+        limbs. Under balanced rules the squad wears the default SWAT player's Kevlar instead."""
+        if self.State.Rules != RULES_BALANCED:
+            return
         if not self.Kevlar:
             kevlar = MakeSoftObjectPath("/Game/Blueprints/Items/ArmorRevised/ArmorMaterials/AM_Kevlar.AM_Kevlar")
             loaded = LoadAsset_Blocking(Conv_SoftObjPathToSoftObjRef(kevlar))
@@ -1070,7 +1225,7 @@ class PvPDirector(Actor):
         if st.Round == 1:
             length = f"до {st.RoundsToWin} побед" if st.RoundsToWin > 1 else "из одного раунда"
             squad = "ИИ-отряд SWAT в игре." if self.MatchBots else "Без ИИ-отряда SWAT."
-            self.Say(f"PvP: матч {length}, раунд {st.Minutes} мин. Подозреваемые берут раунд, если положат всех SWAT или продержатся; SWAT — если нейтрализует всех подозреваемых. Убитый подозреваемый через 10 с вселяется в ИИ-подозреваемого. {squad}")
+            self.Say(f"PvP: матч {length}, раунд {st.Minutes} мин. Подозреваемые берут раунд, если положат всех SWAT или продержатся; SWAT — если нейтрализует всех подозреваемых. Убитый подозреваемый через 10 с вселяется в ИИ-подозреваемого. {squad} {self.RulesText()} Подозреваемые открывают любые двери и забирают упавшее оружие (зажмите сбор улики на стволе).")
         text = f"Раунд {st.Round} · {self.ScoreLine()} · {st.Minutes} мин"
         self.Say(text)
         self.Banner(text)
@@ -1165,6 +1320,8 @@ class PvPDirector(Actor):
             return
         if self.State.Phase == "briefing":
             self.HoldStart()
+        if self.State.Phase == "live":
+            self.PickupTick(self.Now())
         if len(self.ConvertAi) == 0:
             return
         for pc in self.Players():
@@ -1235,6 +1392,7 @@ class PvPDirector(Actor):
         host = self.HostPC()
         if host and self.IsSuspect(host) and self.PawnOf(host):
             self.HideSquadHud()
+        self.DoorsTick()
         if self.MatchBots:
             self.ArmourSquad()
             self.DirectSquad(now, players)
@@ -1530,11 +1688,13 @@ class PvPDirector(Actor):
         self.MinutesButton = self.MakeButton("", STYLE_DARK, "minutes", 18)
         self.RoundsButton = self.MakeButton("", STYLE_DARK, "rounds", 18)
         self.SwapButton = self.MakeButton("", STYLE_DARK, "swap", 18)
+        self.RulesButton = self.MakeButton("", STYLE_DARK, "rules", 18)
         self.Add(bar, self.BotsButton, 0.0, 0.0, 0.0, 0.0, 0, False, 0)
         self.Add(bar, self.AccuracyButton, 12.0, 0.0, 0.0, 0.0, 0, False, 0)
         self.Add(bar, self.MinutesButton, 12.0, 0.0, 0.0, 0.0, 0, False, 0)
         self.Add(bar, self.RoundsButton, 12.0, 0.0, 0.0, 0.0, 0, False, 0)
         self.Add(bar, self.SwapButton, 12.0, 0.0, 0.0, 0.0, 0, False, 0)
+        self.Add(bar, self.RulesButton, 12.0, 0.0, 0.0, 0.0, 0, False, 0)
         actions = self.HBox()
         self.Add(teams, actions, 0.0, 14.0, 0.0, 0.0, ALIGN_CENTER, False, 0)
         self.Add(actions, self.MakeButton("АВТОВЫБОР", STYLE_DARK, "auto", 18), 0.0, 0.0, 0.0, 0.0, 0, False, ALIGN_CENTER)
@@ -1664,6 +1824,7 @@ class PvPDirector(Actor):
         self.Label(self.MinutesButton, f"РАУНД: {st.Minutes} МИН")
         self.Label(self.RoundsButton, "МАТЧ: 1 РАУНД" if st.RoundsToWin == 1 else f"МАТЧ: ДО {st.RoundsToWin} ПОБЕД")
         self.Label(self.SwapButton, "СМЕНА СТОРОН: ВКЛ" if st.Swap else "СМЕНА СТОРОН: ВЫКЛ")
+        self.Label(self.RulesButton, "ПРАВИЛА: УРАВНЕННЫЕ" if st.Rules == RULES_BALANCED else "ПРАВИЛА: ВАНИЛЬНЫЕ")
         self.Label(self.ReadyButton, "ЖДЁМ ОСТАЛЬНЫХ" if self.HostConfirmed else "ГОТОВ")
 
     def FillResult(self, final: bool, host: ReadyOrNotPlayerController, now: float):
@@ -1748,6 +1909,10 @@ class PvPDirector(Actor):
         elif action == "swap":
             st.Swap = not st.Swap
             self.SaveSettings()
+        elif action == "rules":
+            st.Rules = RULES_VANILLA if st.Rules == RULES_BALANCED else RULES_BALANCED
+            self.SaveSettings()
+            self.Say("PvP: " + self.RulesText())
         elif action == "startnow":
             self.ReadyEveryone(players, self.Now())
         elif action == "teams":
@@ -1768,6 +1933,11 @@ class PvPDirector(Actor):
                 self.MenuHidden = True
                 self.Say(name + " готов: " + self.TeamName(self.TeamOf(host)))
         self.ShowMenu(players, host, self.Now())
+
+    def RulesText(self) -> str:
+        if self.State.Rules == RULES_BALANCED:
+            return "Правила уравненные: у подозреваемых винтовки, ИИ-отряд SWAT в кевларе."
+        return "Правила ванильные: оружие и броня как у ИИ миссии."
 
     def NextStep(self, steps: List[int], current: int) -> int:
         for i in range(len(steps)):

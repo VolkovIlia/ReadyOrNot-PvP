@@ -1,27 +1,27 @@
-# Публикация
+# Publishing
 
-Картинка мода — `assets/pvp-cover.png` (1920×1080, подходит как логотип mod.io и первая картинка Nexus).
-Архивы собираются так:
-- pak для mod.io: `python pakmod/build.py pvp --zip` → `dist/RoNPvP-<версия>-modio.zip`;
-- установщик UE4SS: `powershell -File tools/package_release.ps1` → `dist/RoN-PvP-<версия>.zip`.
+The mod image is `assets/pvp-cover.png` (1920×1080; it works as the mod.io logo and as the first Nexus image).
+The archives are built like this:
+- pak for mod.io: `python pakmod/build.py pvp --zip` → `dist/RoNPvP-<version>-modio.zip`;
+- UE4SS installer: `powershell -File tools/package_release.ps1` → `dist/RoN-PvP-<version>.zip`.
 
-Оба архива прикладываются к релизу на GitHub (пре-релиз, пока альфа).
+Both archives are attached to the GitHub release (a pre-release while the mod is in alpha).
 
-## mod.io (меню «Моды» в игре)
+## mod.io (the in-game Mods menu)
 
-Страница мода: https://mod.io/g/readyornot/m/pvp-swat-vs-suspects (создана 2026-10-27). Новую версию загружает владелец аккаунта:
-страница мода → Edit → File manager (zip, номер версии, changelog, согласие с условиями mod.io).
-Поля формы mod.io обновляются только по событию change: при заполнении скриптом браузера
-значение нужно отправить в компонент Vue, иначе «Create mod» отвечает «Field is required».
+Mod page: https://mod.io/g/readyornot/m/pvp-swat-vs-suspects (created 2026-10-27). New versions are uploaded by the
+account owner: mod page → Edit → File manager (zip, version number, changelog, acceptance of the mod.io terms).
+The mod.io form fields only update on the change event: when they are filled in by a browser script, the value has to
+be passed to the Vue component, otherwise "Create mod" answers "Field is required".
 
 - **Name:** PvP - SWAT vs Suspects (Alpha)
 - **Logo:** `assets/pvp-cover.png`
-- **File:** `dist/RoNPvP-<версия>-modio.zip`, версия `<версия>`
+- **File:** `dist/RoNPvP-<version>-modio.zip`, version `<version>`
 - **Tags:** Gameplay, AI
 - **Summary:**
   ALPHA. Any co-op mission becomes PvP: SWAT players vs suspect players. Team menu, rounds, halftime side swap.
   Dead suspects take over AI suspects. Optional AI SWAT bots. Host installs it; friends enable "Join modded
-  servers". Bugs: GitHub. (лимит mod.io — 250 символов)
+  servers". Bugs: GitHub. (mod.io limit: 250 characters)
 - **Description:**
 
 ```
@@ -36,6 +36,10 @@ Turns any Ready or Not co-op mission into PvP: SWAT players against suspect play
   halftime side swap, the next round starts by itself.
 - Suspect players spawn in an AI suspect's place with suspect guns and clothes, no armour or SWAT gear,
   and after a death take over another living AI suspect.
+- Two rule sets in the host's menu: vanilla (the AI keep the guns and armour the mission gives them, a suspect
+  player gets the AI's own guns) or balanced (rifles for suspect players, Kevlar for the AI SWAT squad).
+- Suspects open any door, locked ones too; SWAT still find locked doors locked.
+- Suspects pick up dropped guns: hold the evidence-collect key on a gun.
 - Optional AI SWAT squad: fights for SWAT and hunts suspects on its own when no SWAT player is alive.
   You can play alone against bots on either side.
 - 10-player lobbies (5v5).
@@ -48,32 +52,32 @@ HOW TO PLAY
 KNOWN LIMITS
 - The menu and messages are in Russian for now.
 - Suspect players can still use SWAT radio reports and yells, mission score popups still show and dead players
-  may spectate anyone: blocking those needs native code (the installer version on GitHub does it).
+  may spectate anyone: blocking those needs native code, which a Mods-menu mod cannot load.
 - Little tested with live opponents yet.
 
 Open source (MIT): https://github.com/VolkovIlia/ReadyOrNot-PvP
 Unofficial fan mod, not affiliated with VOID Interactive.
 ```
 
-## Nexus Mods (установщик UE4SS)
+## Nexus Mods (UE4SS installer)
 
-Файл — `dist/RoN-PvP-<версия>.zip` (Main file).
+File: `dist/RoN-PvP-<version>.zip` (Main file).
 
 
 **Mod name:** PvP - SWAT vs Suspects (Alpha)
 
 **Version:** 0.2.1-alpha
 
-**Category:** Gameplay (если есть «Game Modes» — она)
+**Category:** Gameplay (or "Game Modes" if that category exists)
 
-**Summary (до 350 символов):**
+**Summary (up to 350 characters):**
 ALPHA. Turns any co-op mission into PvP: SWAT players vs suspect players, team menu, rounds and halftime side swap. Suspects respawn by taking over AI suspects. Optional AI SWAT bots. Host-only: run Install.bat, friends need nothing. Report bugs on GitHub Issues.
 
-**Requirements:** RE-UE4SS (уже внутри архива, ставится Install.bat). Ссылка: https://github.com/UE4SS-RE/RE-UE4SS
+**Requirements:** RE-UE4SS (already inside the archive, installed by Install.bat). Link: https://github.com/UE4SS-RE/RE-UE4SS
 
-**Tags:** Gameplay, Multiplayer, PvP, Game Mode (что есть в списке)
+**Tags:** Gameplay, Multiplayer, PvP, Game Mode (whichever are in the list)
 
-**Permissions:** открытый исходный код, MIT — ссылка на GitHub.
+**Permissions:** open source, MIT; link to GitHub.
 
 ## Description (BBCode)
 

@@ -1,119 +1,124 @@
-# Разработка
+# Development
 
-## Как это устроено
+## How it works
 
-- **HostBrain** (`HostBrain/ue4ss-mods/HostBrain`) — Lua-мод для RE-UE4SS. Его ставит **только хост** (listen server).
-  Все правила режима живут здесь, клиенты получают состояние через штатную репликацию игры и штатные RPC.
-- **RonCompNative.dll** (`HostBrain/native/RonCompNative.cpp`, MSVC) — нативная часть: защита от краша при сбросе раунда,
-  фильтр SWAT-действий подозреваемых (подмена `UFunction::Func` у серверных RPC), правила «свой/чужой» для
-  скрытого ко-оп PvP, отключение всплывающих очков. Lua загружает её через `package.loadlib` и обменивается с ней
-  через ini и лог.
-- **Чистое ядро** (`HostBrain/src/core`) не зависит от UE: фазы раунда, экономика, настройки в духе cvar для будущего
-  режима в духе CS2 ([design.md](design.md)). Покрыто юнит-тестами, собирается и проверяется вне игры.
-- **RonCompProbe** (`HostBrain/ue4ss-mods/RonCompProbe`) — удалённая консоль для разработки ([testing.md](testing.md)).
-  В релиз не входит.
+- **HostBrain** (`HostBrain/ue4ss-mods/HostBrain`) — a Lua mod for RE-UE4SS. **Only the host** installs it (listen
+  server). All the rules of the mode live here; clients receive the state through the game's own replication and RPCs.
+- **RonCompNative.dll** (`HostBrain/native/RonCompNative.cpp`, MSVC) — the native part: crash protection on round reset,
+  a filter for suspects' SWAT actions (replacing `UFunction::Func` of server RPCs), friend/foe rules for the hidden
+  co-op PvP, disabling score popups. Lua loads it through `package.loadlib` and exchanges data with it through an ini
+  file and a log.
+- **The pure core** (`HostBrain/src/core`) does not depend on UE: round phases, economy, cvar-style settings for a
+  future CS2-style mode ([design.md](design.md)). It is covered by unit tests and is built and tested outside the game.
+- **RonCompProbe** (`HostBrain/ue4ss-mods/RonCompProbe`) — a remote console for development ([testing.md](testing.md)).
+  Not included in releases.
 
-Находки реверса: [re-findings.md](re-findings.md). Тестирование: [testing.md](testing.md).
-Чек-лист игры с другом: [pvp-playtest.md](pvp-playtest.md).
+Reverse-engineering findings: [re-findings.md](re-findings.md). Testing: [testing.md](testing.md).
+Checklist for a session with a friend: [pvp-playtest.md](pvp-playtest.md).
 
-## Структура
+## Layout
 
 ```
-HostBrain/ue4ss-mods/  Lua-моды UE4SS: HostBrain (сам мод) и RonCompProbe (удалённая консоль)
+HostBrain/ue4ss-mods/  UE4SS Lua mods: HostBrain (the mod itself) and RonCompProbe (remote console)
 HostBrain/native/      RonCompNative.dll
-HostBrain/src/core     чистое ядро, HostBrain/tests — юнит-тесты
-data/                  competitive.cfg (настройки в духе cvar), items.csv
-docs/                  дизайн, находки реверса, тестирование
-re/                    скрипты реверса (крупные дампы и распаковка игры не коммитятся)
-tools/                 сборка, установка UE4SS, деплой, упаковка релиза
-assets/                картинки мода
+HostBrain/src/core     pure core, HostBrain/tests — unit tests
+data/                  competitive.cfg (cvar-style settings), items.csv
+docs/                  design, reverse-engineering findings, testing
+re/                    reverse-engineering scripts (large dumps and the unpacked game are not committed)
+tools/                 build, UE4SS install, deploy, release packaging
+assets/                mod images
 ```
 
-## Сборка
+## Building
 
-Нужны Visual Studio 2022 (MSVC, CMake) и PowerShell.
+You need Visual Studio 2022 (MSVC, CMake) and PowerShell.
 
-Сборка `RonCompNative.dll` и тесты ядра:
+Build `RonCompNative.dll` and run the core tests:
 ```bash
 powershell -File tools/build_hostbrain.ps1
 ```
 
-Установка UE4SS (сборка из `tools/bin/ue4ss/<версия>/extracted`; `-Dev` включает консоль UE4SS и горячую перезагрузку):
+Install UE4SS (the build from `tools/bin/ue4ss/<version>/extracted`; `-Dev` enables the UE4SS console and hot reload):
 ```bash
 powershell -File tools/install_ue4ss.ps1 -Dev
 ```
 
-Копирование модов в игру (можно при запущенной игре; скрипты подхватываются после перезапуска игры):
+Copy the mods into the game (works while the game is running; scripts are picked up after a game restart):
 ```bash
 powershell -File tools/deploy_ue4ss_mods.ps1
 ```
 
-Архив релиза в `dist/` (HostBrain с собранной DLL, без RonCompProbe):
+Release archive in `dist/` (HostBrain with the built DLL, without RonCompProbe):
 ```bash
 powershell -File tools/package_release.ps1
 ```
 
-Версия мода — `Version` в `HostBrain/ue4ss-mods/HostBrain/Scripts/main.lua` и запись в [CHANGELOG.md](../CHANGELOG.md).
+The mod version is `Version` in `HostBrain/ue4ss-mods/HostBrain/Scripts/main.lua` plus an entry in
+[CHANGELOG.md](../CHANGELOG.md).
 
-## Pak-версия для меню «Моды» (`pakmod/`)
+## Pak version for the Mods menu (`pakmod/`)
 
-Режим для mod.io собирается без редактора UE: логика написана на подмножестве Python (`pakmod/src/pvp.py`), компилятор
-`pakmod/kc` переводит её в байткод Kismet и пишет cooked-ассеты UE 5.3 как JSON UAssetAPI; UAssetGUI делает из них
-`.uasset`/`.uexp`, `repak` упаковывает в pak. Подробно — в [modio-pak-research.md](modio-pak-research.md).
+The mod.io version of the mode is built without the UE editor: the logic is written in a subset of Python
+(`pakmod/src/pvp.py`), the `pakmod/kc` compiler turns it into Kismet bytecode and writes cooked UE 5.3 assets as
+UAssetAPI JSON; UAssetGUI turns them into `.uasset`/`.uexp`, and `repak` packs them into a pak. Details are in
+[modio-pak-research.md](modio-pak-research.md).
 
-Что нужно:
-- JMAP-дамп рефлексии игры в `re/dumps/*.jmap` и `.usmap` (снимаются UE4SS, в git не входят);
-- `tools/bin/uassetgui/UAssetGUI.exe` (1.1.0) и `tools/bin/repak/repak.exe` (0.2.3) из их релизов на GitHub;
-- карта типов: `%LOCALAPPDATA%\UAssetGUI\Mappings\RoN.usmap` (копия `.usmap` из дампа).
+Requirements:
+- a JMAP dump of the game's reflection in `re/dumps/*.jmap` and a `.usmap` (taken with UE4SS, not in git);
+- `tools/bin/uassetgui/UAssetGUI.exe` (1.1.0) and `tools/bin/repak/repak.exe` (0.2.3) from their GitHub releases;
+- the type mappings: `%LOCALAPPDATA%\UAssetGUI\Mappings\RoN.usmap` (a copy of the `.usmap` from the dump).
 
-Сборка, установка в `Paks/~mods` и архив для mod.io:
+Build, install into `Paks/~mods` and create the mod.io archive:
 ```bash
 python pakmod/build.py pvp --deploy --zip
 ```
 
-Устройство:
-- `kc/kismet.py` — выражения Kismet и их размеры в памяти (проверены на 146 функциях Blueprint игры);
-- `kc/uasset.py` — пакет: таблица имён, импорты, экспорты;
-- `kc/blueprint.py` — класс, функции, переменные, вызовы;
-- `kc/lang.py` — компилятор языка;
+Structure:
+- `kc/kismet.py` — Kismet expressions and their in-memory sizes (checked against 146 functions of the game's
+  Blueprints);
+- `kc/uasset.py` — the package: name table, imports, exports;
+- `kc/blueprint.py` — class, functions, variables, calls;
+- `kc/lang.py` — the language compiler;
 - `kc/data.py` — `ModActorSpawnData`;
-- `kc/reflect.py`, `kc/types.py` — рефлексия игры и типы свойств.
+- `kc/reflect.py`, `kc/types.py` — the game's reflection and property types.
 
-Справка по функциям и свойствам игры: `python pakmod/sig.py ReadyOrNotPlayerController:ReadyUp "W_StandardButton_C:*Click*"`.
+Reference for the game's functions and properties:
+`python pakmod/sig.py ReadyOrNotPlayerController:ReadyUp "W_StandardButton_C:*Click*"`.
 
-Правила байткода, на которых уже падала игра:
-- результат функции пишется через `EX_LocalOutVariable(ReturnValue)`, а вызов присваивается `EX_Let(temp, вызов)`.
-  Передавать адрес результата аргументом нельзя: `ProcessScriptFunction` пропускает параметр результата;
-- `EX_Return` без значения: копирование результата в буфер вызова-инструкции (64 байта, не инициализирован)
-  роняет игру на массивах и строках;
-- имя вида `Ret_1` движок хранит как `Ret` с номером, базовое имя тоже нужно в таблице имён.
+Bytecode rules that the game has already crashed on:
+- a function result is written through `EX_LocalOutVariable(ReturnValue)`, and a call is assigned with
+  `EX_Let(temp, call)`. Passing the address of the result as an argument does not work: `ProcessScriptFunction`
+  skips the return parameter;
+- `EX_Return` without a value: copying the result into the buffer of the calling instruction (64 bytes,
+  uninitialized) crashes the game on arrays and strings;
+- the engine stores a name like `Ret_1` as `Ret` plus a number, so the base name must be in the name table too.
 
-Отладка: директор пишет журнал в `Notes` (UE4SS: `FindAllOf("BP_PvPDirector_C")[1].Notes`) и в
-`SaveGames\RoNPvPLog.sav`. Функции Blueprint можно вызывать из UE4SS напрямую.
+Debugging: the director writes a log into `Notes` (UE4SS: `FindAllOf("BP_PvPDirector_C")[1].Notes`) and into
+`SaveGames\RoNPvPLog.sav`. Blueprint functions can be called from UE4SS directly.
 
-## Экспериментальное: штатные PvP-режимы игры
+## Experimental: the game's own PvP modes
 
-В игре остались собственные PvP-режимы (Firefight, Defusal и др.). `comp_start` переносит лобби на карту в таком режиме.
-Это заготовка следующих этапов: режимы нестабильны и могут прервать игру у всех.
-
-```
-comp_start campus ff      нативный Firefight на Watt Community College (проверено)
-comp_start campus RR_PVP  Defusal с бомбой (проверено; правила CS2 — следующий этап)
-comp_start <карта> <режим> force   непроверенная пара: может прервать игру у всех
-comp_status               режим, счёт, защита, проверка попаданий
-comp_maps / comp_modes    список карт и режимов
-```
-
-## Одиночный матч за подозреваемых против ботов SWAT (консоль)
-
-Старый одиночный режим, до меню команд. Сейчас то же самое удобнее делать через меню PvP (вступить за подозреваемых
-и играть одному).
+The game still contains its own PvP modes (Firefight, Defusal and others). `comp_start` moves the lobby to a map in
+such a mode. This is groundwork for later stages: the modes are unstable and can end the game for everyone.
 
 ```
-comp_play_suspect campus [n]  матч до n побед (по умолчанию 3): вы — подозреваемый, ИИ-подозреваемые — союзники,
-                              отряд ИИ SWAT штурмует здание
-comp_round_time 240 20        время штурма и подготовки, с (со следующего раунда)
-comp_bot_hints 0|1            подсказка отряду после 60 с без контакта (по умолчанию включена)
-comp_bot_accuracy 3           точность ботов SWAT: 1 = обычная, больше = хуже (по умолчанию 2)
-comp_suspect off              выйти из режима
+comp_start campus ff      native Firefight on Watt Community College (tested)
+comp_start campus RR_PVP  Defusal with a bomb (tested; CS2 rules are the next stage)
+comp_start <map> <mode> force   untested pair: may end the game for everyone
+comp_status               mode, score, protections, hit validation
+comp_maps / comp_modes    list of maps and modes
+```
+
+## Solo match as a suspect against SWAT bots (console)
+
+The old solo mode, from before the team menu. Today the same thing is easier through the PvP menu (join the suspects
+and play alone).
+
+```
+comp_play_suspect campus [n]  match to n wins (3 by default): you are a suspect, AI suspects are your allies,
+                              an AI SWAT squad storms the building
+comp_round_time 240 20        assault and preparation time, s (from the next round)
+comp_bot_hints 0|1            hint for the squad after 60 s without contact (on by default)
+comp_bot_accuracy 3           SWAT bot accuracy: 1 = normal, higher = worse (2 by default)
+comp_suspect off              leave the mode
 ```

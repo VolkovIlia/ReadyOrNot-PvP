@@ -1,55 +1,57 @@
-name: Ошибка / Bug report
-description: Что-то работает не так или игра вылетела / Something is broken or the game crashed
+name: Bug report
+description: Something is broken or the game crashed
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Спасибо, что сообщаете об ошибке — мод в альфе, и каждый отчёт помогает.
-        Thanks for reporting — the mod is in alpha and every report helps.
+        Thanks for reporting a bug: the mod is in alpha, and every report helps.
   - type: input
     id: version
     attributes:
-      label: Версия мода / Mod version
-      description: Строка `[HostBrain] ... loaded` в UE4SS.log или имя архива / the `[HostBrain] ... loaded` line in UE4SS.log or the archive name
-      placeholder: 0.1.0-alpha
+      label: Mod version
+      description: The mod.io file version, the archive name, or the first line of RoNPvPLog.sav
+      placeholder: 0.3.0-alpha
     validations:
       required: true
   - type: dropdown
     id: role
     attributes:
-      label: Кто вы в игре / Your role
+      label: Your role in the game
       options:
-        - Хост, играю один с ботами / Host, alone with bots
-        - Хост, с другими игроками / Host, with other players
-        - Клиент (без мода) / Client (no mod)
+        - Host, playing alone with bots
+        - Host, with other players
+        - Client (subscribed to the mod)
+        - Client (no mod, "Join modded servers")
     validations:
       required: true
   - type: textarea
     id: what
     attributes:
-      label: Что произошло / What happened
-      description: Что делали, что ожидали, что случилось. Карта, сторона, раунд. / What you did, expected and got. Map, side, round.
+      label: What happened
+      description: What you did, what you expected and what happened. Map, side, round.
     validations:
       required: true
   - type: textarea
     id: steps
     attributes:
-      label: Как повторить / Steps to reproduce
+      label: Steps to reproduce
       placeholder: |
-        1. Кампус, «Слон», хост за подозреваемых, боты вкл.
+        1. Campus, "Elephant", host as a suspect, bots on.
         2. ...
   - type: textarea
     id: logs
     attributes:
-      label: Логи хоста / Host logs
+      label: Host logs
       description: |
-        Перетащите сюда файлы с компьютера хоста / Drag the host's files here:
-        `<игра/game>\ReadyOrNot\Binaries\Win64\ue4ss\UE4SS.log`
-        `<игра/game>\ReadyOrNot\Binaries\Win64\ue4ss\Mods\HostBrain\native\RonCompNative.log`
-        Скриншоты тоже помогают / Screenshots help too.
+        Drag the files from the host's computer here:
+        `%LOCALAPPDATA%\ReadyOrNot\Saved\SaveGames\RoNPvPLog.sav` (the mode's log)
+        With the legacy UE4SS installer version also:
+        `<game>\ReadyOrNot\Binaries\Win64\ue4ss\UE4SS.log`
+        `<game>\ReadyOrNot\Binaries\Win64\ue4ss\Mods\HostBrain\native\RonCompNative.log`
+        Screenshots help too.
   - type: input
     id: game
     attributes:
-      label: Версия игры / Game version
-      description: Если знаете (главное меню, внизу) / If you know it (main menu, bottom)
+      label: Game version
+      description: If you know it (main menu, at the bottom)

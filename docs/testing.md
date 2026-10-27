@@ -1,41 +1,43 @@
-# Тестирование
+# Testing
 
-## Уровни
-1. **Юнит-тесты ядра** (`HostBrain/tests`) — без игры, на каждой сборке:
+## Levels
+1. **Core unit tests** (`HostBrain/tests`) — without the game, on every build:
    ```bash
    powershell -File tools/test_core.ps1
    ```
-   Покрывают фазы, счёт, смену сторон, овертайм, экономику, закупку и статистику.
-2. **Проверка на старте HostBrain** — все хукнутые функции и свойства игры найдены, размеры совпадают.
-   Если нет — мод отключается с понятной ошибкой в логе UE4SS.
-3. **Сценарии в игре** — `comp_autotest <scenario>`: боты + форсированные события → JSONL-лог → `tools/logcheck.py`.
-4. **UI** — скриншоты HUD и меню закупки через computer-use.
-5. **Сеть** — 2 экземпляра или 2 ПК, профили clumsy 0/60/120 мс и 1% потерь, логи попаданий с обеих сторон.
-6. **Реальные плейтесты** — лобби с людьми на каждом выходе из фазы.
+   They cover phases, score, side swap, overtime, economy, buying and statistics.
+2. **HostBrain startup check** — all hooked game functions and properties are found and their sizes match.
+   If not, the mod disables itself with a clear error in the UE4SS log.
+3. **In-game scenarios** — `comp_autotest <scenario>`: bots + forced events → JSONL log → `tools/logcheck.py`.
+4. **UI** — screenshots of the HUD and the buy menu through computer-use.
+5. **Network** — 2 instances or 2 PCs, clumsy profiles of 0/60/120 ms and 1% loss, hit logs from both sides.
+6. **Real playtests** — a lobby with people at the end of every phase.
 
-## Удалённая консоль RonCompProbe (разработка)
+## RonCompProbe remote console (development)
 
-Позволяет управлять игрой и наблюдать за ней без мыши и клавиатуры.
+Lets you control and watch the game without a mouse and keyboard.
 
-1. Один раз: `powershell -File tools/install_ue4ss.ps1 -Dev`, затем `powershell -File tools/deploy_ue4ss_mods.ps1`.
-2. Запустить игру напрямую: `ReadyOrNot.exe` в папке игры. Через `steam://rungameid` Steam сначала спросит параметры запуска.
-3. Положить Lua-скрипт в `<игра>/ReadyOrNot/Binaries/Win64/ue4ss/Mods/RonCompProbe/inbox.lua`.
-   Зонд выполнит его на игровом потоке в течение секунды и переименует в `inbox.done.lua`.
-   В скрипте доступны `State()`, `Exec(cmd)`, `CallStatic(class, fn, ...)`, `Get(obj, prop)`, `PC()`, `GM()`, `GS()`, `World()`,
-   `Shot(tag)`, `Log(fmt, ...)`, `Quit()`.
-   Задержки и циклы в скриптах — только `ExecuteInGameThreadWithDelay` / `LoopInGameThreadWithDelay`:
-   `ExecuteWithDelay`/`LoopAsync` исполняют Lua на рабочем потоке UE4SS и со временем роняют игру
-   (docs/re-findings.md, «Краш через ~2 ч игры»). `obj:GetClass()` вызывать только после `obj:IsValid()`:
-   на нулевом объекте UE4SS читает `+0x10` и игра падает. `ApplyDamage` — только с инстигатором и причиной.
-   Новые скрипты HostBrain после деплоя подхватываются `RestartMod("HostBrain")`, но только пока HostBrain не
-   поставил хуки на Blueprint-функции (`SwapTeams`, `ToggleReady`, `OnClicked_Derived` — после первого экрана
-   подготовки). `RestartMod` снимает только нативные хуки, а скриптовые остаются привязаны к удалённому Lua-состоянию:
-   следующий вызов такой функции вешает игру. После экрана подготовки — перезапуск игры.
-4. Вывод пишется в `Mods/RonCompProbe/probe.log`.
-5. Скриншоты сохраняются в `<игра>/ReadyOrNot/Ready Or Not/Saved/Screenshots/`:
-   `Exec("shot showui")` снимает кадр с интерфейсом, `HighResShot 1` — только 3D-сцену.
+1. Once: `powershell -File tools/install_ue4ss.ps1 -Dev`, then `powershell -File tools/deploy_ue4ss_mods.ps1`.
+2. Start the game directly: `ReadyOrNot.exe` in the game folder. Through `steam://rungameid`, Steam first asks for
+   launch options.
+3. Put a Lua script into `<game>/ReadyOrNot/Binaries/Win64/ue4ss/Mods/RonCompProbe/inbox.lua`.
+   The probe runs it on the game thread within a second and renames it to `inbox.done.lua`.
+   Scripts can use `State()`, `Exec(cmd)`, `CallStatic(class, fn, ...)`, `Get(obj, prop)`, `PC()`, `GM()`, `GS()`,
+   `World()`, `Shot(tag)`, `Log(fmt, ...)`, `Quit()`.
+   For delays and loops in scripts use only `ExecuteInGameThreadWithDelay` / `LoopInGameThreadWithDelay`:
+   `ExecuteWithDelay`/`LoopAsync` run Lua on a UE4SS worker thread and sooner or later crash the game
+   (docs/re-findings.md, "Crash after ~2 h of play"). Call `obj:GetClass()` only after `obj:IsValid()`:
+   on a null object UE4SS reads `+0x10` and the game crashes. Call `ApplyDamage` only with an instigator and a damage
+   causer.
+   After a deploy, new HostBrain scripts are picked up by `RestartMod("HostBrain")`, but only until HostBrain has
+   hooked Blueprint functions (`SwapTeams`, `ToggleReady`, `OnClicked_Derived` — after the first pre-mission
+   screen). `RestartMod` removes only native hooks, while script hooks stay bound to the deleted Lua state: the next
+   call of such a function hangs the game. After the pre-mission screen, restart the game instead.
+4. Output is written to `Mods/RonCompProbe/probe.log`.
+5. Screenshots are saved to `<game>/ReadyOrNot/Ready Or Not/Saved/Screenshots/`:
+   `Exec("shot showui")` captures a frame with the UI, `HighResShot 1` captures only the 3D scene.
 
-Пример: запуск Defusal на кампусе от лица хоста:
+Example: starting Defusal on the campus as the host:
 ```lua
 Exec("open RoN_Campus_Core?listen?game=RR_PVP")
 ```
