@@ -172,6 +172,7 @@ class PvPDirector(Actor):
     PickupPath: Map[Actor, str]
     PickupEvidence: Map[Actor, EvidenceComponent]
     PickupAt: float
+    ReportsSeen: List[Actor]
     DoorsAt: float
     Removed: List[Actor]
     SquadSeen: bool
@@ -202,6 +203,7 @@ class PvPDirector(Actor):
     BotsWanted: int
     SquadSized: bool
     SquadFirstAt: float
+    ArmsWait: float
     # the local HUD (every machine with the pak): the scoreboard on Tab
     FontsReady: bool
     FontPlain: SlateFontInfo
@@ -619,6 +621,7 @@ class PvPDirector(Actor):
         self.Fallen.clear()
         self.SquadSized = False
         self.SquadFirstAt = 0.0
+        self.ArmsWait = 0.0
 
     def NewMatch(self):
         st = self.State
@@ -695,9 +698,9 @@ class PvPDirector(Actor):
         return hit
 
     def ChooseAi(self, players: List[ReadyOrNotPlayerController], near: Vector, has_near: bool) -> SuspectCharacter:
-        """An AI suspect to take over: no SWAT within SAFE_DISTANCE and none with a line of sight to it,
-        nearest to where the player fell. Without such a one the line of sight is dropped; an AI right next
-        to SWAT is never taken, nor one another player is about to take."""
+        """An AI suspect to take over: no SWAT within SAFE_DISTANCE and none with a line of sight to it, one
+        with a long gun before one with a pistol before an unarmed one, nearest to where the player fell. Without such a one the line of sight
+        is dropped; an AI right next to SWAT is never taken, nor one another player is about to take."""
         swat = self.SwatBodies(players)
         best: SuspectCharacter = None
         fallback: SuspectCharacter = None
@@ -722,6 +725,8 @@ class PvPDirector(Actor):
                 score = RandomFloat() * 1000000.0
                 if has_near:
                     score = Vector_Distance(at, near)
+                # a long gun first, then a pistol, an unarmed AI suspect last (its player would get a spare pistol)
+                score += (2 - self.ArmsTier(ai)) * 100000000.0
                 if hidden and score < best_score:
                     best = ai
                     best_score = score
@@ -731,6 +736,19 @@ class PvPDirector(Actor):
         if best:
             return best
         return fallback
+
+    def Armed(self, ai: ReadyOrNotCharacter) -> bool:
+        return self.ArmsTier(ai) > 0
+
+    def ArmsTier(self, ai: ReadyOrNotCharacter) -> int:
+        """2 for an AI suspect with a long gun, 1 with a pistol only, 0 unarmed."""
+        tier = 0
+        for item in ai.InventoryComp.InventoryItems:
+            if item and self.PlayerGun(item) != "":
+                if StartsWith(self.ClassName(item), "Primary_", 0):
+                    return 2
+                tier = 1
+        return tier
 
     def Book(self, pc: ReadyOrNotPlayerController, ai: SuspectCharacter) -> str:
         """Books an AI suspect for the player's next pawn and gives that spawn the suspect kit (the game
@@ -768,7 +786,8 @@ class PvPDirector(Actor):
 
     def Convert(self, pc: ReadyOrNotPlayerController):
         """The player's new pawn takes the booked AI's place: the AI leaves, the pawn turns suspect and
-        loses the SWAT gear."""
+        loses the SWAT gear. The AI suspects were booked on the pre-mission screen, before the mission armed
+        them, so the guns are read now, and the booking gives way to a better armed AI suspect."""
         name = self.NameOf(pc)
         pawn = self.PawnOf(pc)
         ai = self.ConvertAi[name]
@@ -777,9 +796,16 @@ class PvPDirector(Actor):
         primary = self.ConvertPrimary[name]
         secondary = self.ConvertSecondary[name]
         self.ConvertAi.remove(name)
+        if not ai or self.IsDown(ai) or self.ArmsTier(ai) < 2:
+            other = self.ChooseAi(self.Players(), Vector(X=0.0, Y=0.0, Z=0.0), False)
+            if other and (not ai or self.IsDown(ai) or self.ArmsTier(other) > self.ArmsTier(ai)):
+                ai = other
         if ai and not self.IsDown(ai):
             spot = ai.K2_GetActorLocation()
             yaw = ai.K2_GetActorRotation().Yaw
+            self.GunsFor(ai)
+            primary = self.GunPrimary
+            secondary = self.GunSecondary
             self.RemoveAi(ai)
         self.PlaceAt(pawn, spot, yaw)
         self.SetTeam(pc, SUSPECT)
@@ -867,7 +893,19 @@ class PvPDirector(Actor):
         pawn = self.PawnOf(pc)
         if not pawn or pawn in self.Stripped or self.HostWaitsForSquad(pc):
             return
+        # the mission arms its AI suspects a moment after the first player spawns: their guns are what the
+        # suspect player gets, so the takeover waits for them (at most 6 s)
+        if self.ArmsWait <= 0.0:
+            self.ArmsWait = self.Now()
+        if not self.SuspectsArmed() and self.Now() - self.ArmsWait < 6.0:
+            return
         self.Convert(pc)
+
+    def SuspectsArmed(self) -> bool:
+        for ai in self.LivingAiSuspects():
+            if self.Armed(ai):
+                return True
+        return False
 
     def HostWaitsForSquad(self, pc: ReadyOrNotPlayerController) -> bool:
         """The mission start spawns the AI squad around the host's pawn, so with bots a suspect host stays
@@ -920,7 +958,9 @@ class PvPDirector(Actor):
         name = self.ClassName(item)
         if not StartsWith(name, "Primary_", 0) and not StartsWith(name, "Secondary_", 0):
             return ""
-        if Contains(name, "Pepperball", False, False) or Contains(name, "Beanbag", False, False) or Contains(name, "Taser", False, False):
+        # the pepperball launchers (the TAC-700 and the VKS too), the beanbag shotgun, the taser
+        if isinstance(item, PepperballGun) or Contains(name, "Pepperball", False, False) or Contains(name, "Beanbag", False, False) \
+                or Contains(name, "Taser", False, False):
             return ""
         if name in self.Weapons:
             return self.Weapons[name]
@@ -1132,13 +1172,18 @@ class PvPDirector(Actor):
 
     def EvidenceGun(self, item: EvidenceActor) -> str:
         """A gun lying as mission evidence (a prop, not a dropped weapon): the player gun its class, name or mesh
-        tells (a scoped bolt-action rifle is the TAC-700); "" for other evidence."""
+        tells; "" for other evidence."""
         words = GetObjectName(GetObjectClass(item)) + " " + Conv_TextToString(item.EvidenceName)
         if item.StaticMesh and item.StaticMesh.StaticMesh:
             words = words + " " + GetObjectName(item.StaticMesh.StaticMesh)
-        for word in ["Sniper", "снайпер", "700", "Bolt", "Scope", "Marksman"]:
+        return self.GunByWords(words)
+
+    def GunByWords(self, words: str) -> str:
+        """The player gun a prop's names tell: a sniper rifle is the M76 (the player's scoped marksman rifle; the
+        TAC-700 is a pepperball launcher), a rifle with no more said the SBR; "" for no gun."""
+        for word in ["Sniper", "снайпер", "M25", "M24", "Marksman", "M76"]:
             if Contains(words, word, False, False):
-                return "Primary_TAC700"
+                return "Primary_M76"
         for word in ["Shotgun", "дробов", "870", "Saiga"]:
             if Contains(words, word, False, False):
                 return "Primary_870mcs"
@@ -1155,6 +1200,36 @@ class PvPDirector(Actor):
             if Contains(words, word, False, False):
                 return "Secondary_G19_V2"
         return ""
+
+    def ReportedGuns(self):
+        """Some missions keep a gun as a thing to report to TOC (a ReportableActor next to a plain mesh, the
+        Penthouse's M25 rifles): when a suspect player "reports" one, the gun is his instead: the mesh within
+        45 cm leaves the table and the matching player gun takes its slot in his kit."""
+        for actor in GetAllActorsOfClass(ReportableActor):
+            item = cast(actor, ReportableActor)
+            if not item or not item.bHasBeenReported or actor in self.ReportsSeen:
+                continue
+            self.ReportsSeen.append(actor)
+            reporter = item.ReportedBy
+            if not reporter or reporter.DefaultTeam != SUSPECT or not cast(reporter.Controller, ReadyOrNotPlayerController) or self.IsDown(reporter):
+                continue
+            at = actor.K2_GetActorLocation()
+            props: List[Actor] = []
+            words = GetObjectName(GetObjectClass(actor)) + " " + Conv_TextToString(item.ReportableName)
+            for other in GetAllActorsOfClass(StaticMeshActor):
+                if Vector_Distance(other.K2_GetActorLocation(), at) < 45.0:
+                    props.append(other)
+                    words = words + " " + GetObjectName(other)
+            gun = self.GunByWords(words)
+            self.Log(f"reported by a suspect: {words} -> {gun}")
+            if gun == "":
+                continue
+            for other in props:
+                other.SetActorHiddenInGame(True)
+                other.SetActorEnableCollision(False)
+            if self.State.Rules == RULES_BALANCED and StartsWith(gun, "Primary_", 0):
+                gun = self.Rifle(gun)
+            self.GrantGun(reporter, self.WeaponPath(gun))
 
     def PickupTarget(self, actor: Actor) -> str:
         """The class path a suspect player gets for a gun he collects as evidence: a dropped gun as PlayerGun has
@@ -1205,6 +1280,7 @@ class PvPDirector(Actor):
             prop = cast(actor, EvidenceActor)
             if prop and prop.EvidenceComponent:
                 self.WatchPickup(actor, prop.EvidenceComponent)
+        self.ReportedGuns()
         done: List[Actor] = []
         for actor in self.PickupBy:
             evidence = self.PickupEvidence[actor]
