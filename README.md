@@ -53,7 +53,7 @@ UE4SS-версия, она уступает миссию pak-версии.
 ## Установка установщиком (UE4SS)
 
 1. Закройте игру.
-2. Скачайте `RoN-PvP-…-alpha.zip` со страницы [Releases](https://github.com/VolkovIlia/ReadyOrNot-PvP/releases/latest)
+2. Скачайте `RoN-PvP-…-alpha.zip` со страницы [Releases](https://github.com/VolkovIlia/ReadyOrNot-PvP/releases)
    и распакуйте в любую папку.
 3. Запустите **`Install.bat`**. Он сам найдёт игру в Steam и поставит мод вместе с загрузчиком
    [RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS). Если UE4SS уже стоит, установщик его не трогает.
@@ -171,7 +171,7 @@ Install (host), either:
 - **In-game Mods menu:** subscribe to **PvP - SWAT vs Suspects** and restart the game (or put `RoNPvP.pak` from the
   `-modio.zip` release asset into `ReadyOrNot\Content\Paks\~mods\`). Friends subscribe too, or turn on
   "Join modded servers" once — the game hides modded lobbies otherwise.
-- **Installer:** download the [latest release](https://github.com/VolkovIlia/ReadyOrNot-PvP/releases/latest), unzip
+- **Installer:** download the [latest release](https://github.com/VolkovIlia/ReadyOrNot-PvP/releases), unzip
   it and run **`Install.bat`** — it finds the game through Steam and installs the mod with
   [RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS). Friends need nothing. `Uninstall.bat` removes it.
 
