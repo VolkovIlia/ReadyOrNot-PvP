@@ -8,8 +8,12 @@
 --
 -- Layout, after CS2's team select: a dark full-screen page, "ВЫБЕРИТЕ КОМАНДУ", two team cards side by
 -- side (SWAT blue, suspects orange) with a coloured header, "players / 5", the player slots (bots fill
--- SWAT's free slots by their squad names) and a join button; below, the bots and time settings,
--- auto-select and Ready.
+-- SWAT's free slots by their squad names) and a join button; below, the match settings, auto-select
+-- and Ready.
+--
+-- Between rounds the same page shows the round result instead, after CS2's round-end and match-end
+-- screens: the winning side in its colour, the reason, the score in the two teams' colours, what comes
+-- next (halftime swap, countdown) and the round or match buttons.
 
 local C = require("hb_common")
 
@@ -32,7 +36,7 @@ local Style = { Light = 0, Red = 3, Dark = 6, Yellow = 8 }
 
 -- UMG enums
 local Visible, Collapsed, SelfHitTestInvisible = 0, 1, 4
-local AlignCenter = 2
+local AlignLeft, AlignCenter, AlignRight = 1, 2, 3
 local SizeAuto, SizeFill = 0, 1
 
 -- UMG colours are linear: 0.2 shows as about 0.48 on screen.
@@ -40,6 +44,7 @@ local Colors = {
     White = { 1, 1, 1 },
     Grey = { 0.32, 0.34, 0.37 },
     Dim = { 0.16, 0.17, 0.19 },
+    Yellow = { 1, 0.62, 0.05 },
     Swat = { 0.3, 0.5, 1 },
     SwatBot = { 0.22, 0.32, 0.55 },
     Suspect = { 1, 0.5, 0.12 },
@@ -126,12 +131,14 @@ local function Sized(tree, child, width, height)
     return size
 end
 
--- Adds to a vertical or horizontal box; pad = { left, top, right, bottom }.
-local function Add(box, child, pad, align, fill)
+-- Adds to a vertical or horizontal box; pad = { left, top, right, bottom }. In a horizontal box
+-- valign centres the child vertically.
+local function Add(box, child, pad, align, fill, valign)
     local slot = box:AddChild(child)
     if pad then pcall(function() slot:SetPadding(Margin(pad[1] or 0, pad[2] or 0, pad[3] or 0, pad[4] or 0)) end) end
     if align then pcall(function() slot:SetHorizontalAlignment(align) end) end
     if fill then pcall(function() slot:SetSize({ SizeRule = SizeFill, Value = 1 }) end) end
+    if valign then pcall(function() slot:SetVerticalAlignment(valign) end) end
     return slot, child
 end
 
@@ -203,6 +210,63 @@ local function Card(screen, tree, key)
     return Sized(tree, body, 560), { Header = header, Count = count, Rows = rows, Status = status, Join = join }
 end
 
+-- One side of the score: the team's name and its round wins on the team colour, the number next to
+-- the colon in the middle.
+local function ScoreBox(tree, key, label, numberFirst)
+    local box = Fill(tree, Teams[key].Header, 30, 10, 30, 10)
+    pcall(function() box:SetHorizontalAlignment(numberFirst and AlignLeft or AlignRight) end)
+    pcall(function() box:SetVerticalAlignment(AlignCenter) end)
+    local row = Make(tree, "HBox")
+    box:SetContent(row)
+    local name = Text(tree, label, 28, Colors.White)
+    local number = Text(tree, "0", 72, Colors.White)
+    if numberFirst then
+        Add(row, number, nil, nil, nil, AlignCenter)
+        Add(row, name, { 24, 0, 0, 0 }, nil, nil, AlignCenter)
+    else
+        Add(row, name, nil, nil, nil, AlignCenter)
+        Add(row, number, { 24, 0, 0, 0 }, nil, nil, AlignCenter)
+    end
+    return Sized(tree, box, 460, 120), { Box = box, Number = number }
+end
+
+local function ResultPage(screen, tree, box)
+    local top = Text(tree, "", 22, Colors.Grey)
+    Add(box, top, nil, AlignCenter)
+    local winner = Text(tree, "", 68, Colors.White)
+    Add(box, winner, { 0, 4, 0, 0 }, AlignCenter)
+    local reason = Text(tree, "", 22, Colors.Grey)
+    Add(box, reason, { 0, 0, 0, 34 }, AlignCenter)
+
+    local scores = Make(tree, "HBox")
+    Add(box, scores, nil, AlignCenter)
+    local swatBox, swat = ScoreBox(tree, "swat", "SWAT", false)
+    Add(scores, swatBox, nil, nil, nil, AlignCenter)
+    Add(scores, Text(tree, ":", 64, Colors.Grey), { 22, 0, 22, 0 }, nil, nil, AlignCenter)
+    local suspectBox, suspect = ScoreBox(tree, "suspect", "ПОДОЗРЕВАЕМЫЕ", true)
+    Add(scores, suspectBox, nil, nil, nil, AlignCenter)
+
+    local notice = Text(tree, "", 26, Colors.Yellow)
+    Add(box, notice, { 0, 34, 0, 0 }, AlignCenter)
+    local countdown = Text(tree, "", 22, Colors.White)
+    Add(box, countdown, { 0, 12, 0, 0 }, AlignCenter)
+
+    local buttons = Make(tree, "HBox")
+    Add(box, buttons, { 0, 30, 0, 0 }, AlignCenter)
+    local startNow = Sized(tree, Button(screen, "НАЧАТЬ СЕЙЧАС", Style.Yellow, "startnow", 22), 300)
+    local teams = Button(screen, "КОМАНДЫ И НАСТРОЙКИ", Style.Dark, "teams")
+    local reset = Button(screen, "СБРОСИТЬ МАТЧ", Style.Dark, "newmatch")
+    local newMatch = Sized(tree, Button(screen, "НОВЫЙ МАТЧ", Style.Yellow, "newmatch", 24), 320)
+    Add(buttons, startNow, nil, nil, nil, AlignCenter)
+    Add(buttons, teams, { 16, 0, 0, 0 }, nil, nil, AlignCenter)
+    Add(buttons, reset, { 16, 0, 0, 0 }, nil, nil, AlignCenter)
+    Add(buttons, newMatch, nil, nil, nil, AlignCenter)
+    return {
+        Root = box, Top = top, Winner = winner, Reason = reason, Swat = swat, Suspect = suspect,
+        Notice = notice, Countdown = countdown, RoundButtons = { startNow, teams, reset }, NewMatch = newMatch,
+    }
+end
+
 -- The page's name carries a prefix, so a page left by an earlier HostBrain (RestartMod drops the Lua
 -- state, not the widgets) is found and removed. Names stay unique: reusing one would replace an object.
 local PagePrefix = "HostBrainTeamMenu"
@@ -230,8 +294,11 @@ local function Build(screen)
     slot:SetAnchors({ Minimum = { X = 0, Y = 0 }, Maximum = { X = 1, Y = 1 } })
     slot:SetOffsets(Margin(0, 0, 0, 0))
 
-    local box = Make(tree, "VBox")
-    page:SetContent(box)
+    local content = Make(tree, "VBox")
+    page:SetContent(content)
+
+    local box = Make(tree, "VBox") -- the team page
+    Add(content, box, nil, AlignCenter)
     Add(box, Text(tree, "ВЫБЕРИТЕ КОМАНДУ", 54, Colors.White), nil, AlignCenter)
     local subtitle = Text(tree, "", 18, Colors.Grey)
     Add(box, subtitle, { 0, 4, 0, 30 }, AlignCenter)
@@ -248,20 +315,28 @@ local function Build(screen)
     local bots = Button(screen, "", Style.Dark, "bots")
     local accuracy = Button(screen, "", Style.Dark, "accuracy")
     local minutes = Button(screen, "", Style.Dark, "minutes")
-    local auto = Button(screen, "АВТОВЫБОР", Style.Dark, "auto")
-    for i, button in ipairs({ bots, accuracy, minutes, auto }) do
+    local rounds = Button(screen, "", Style.Dark, "rounds")
+    local swap = Button(screen, "", Style.Dark, "swap")
+    for i, button in ipairs({ bots, accuracy, minutes, rounds, swap }) do
         Add(bar, button, { i > 1 and 12 or 0, 0, 0, 0 })
     end
+    local actions = Make(tree, "HBox")
+    Add(box, actions, { 0, 14, 0, 0 }, AlignCenter)
+    Add(actions, Button(screen, "АВТОВЫБОР", Style.Dark, "auto"), nil, nil, nil, AlignCenter)
     local ready = Button(screen, "ГОТОВ", Style.Yellow, "ready", 24)
-    Add(bar, Sized(tree, ready, 260), { 36, 0, 0, 0 })
+    Add(actions, Sized(tree, ready, 260), { 24, 0, 0, 0 })
 
     local hint = Text(tree, "Остальные игроки выбирают сторону в чате: !swat или !suspect · список команд: !teams", 15, Colors.Dim)
     Add(box, hint, { 0, 18, 0, 0 }, AlignCenter)
 
+    local result = Make(tree, "VBox") -- the round result page
+    Add(content, result, nil, AlignCenter)
+
     Menu.Page = page
     Menu.Parts = {
-        Subtitle = subtitle, Cards = { swat = swat, suspect = suspects },
-        Bots = bots, Accuracy = accuracy, Minutes = minutes, Ready = ready,
+        Teams = box, Subtitle = subtitle, Cards = { swat = swat, suspect = suspects },
+        Bots = bots, Accuracy = accuracy, Minutes = minutes, Rounds = rounds, Swap = swap, Ready = ready,
+        Result = ResultPage(screen, tree, result),
     }
 end
 
@@ -302,8 +377,31 @@ local function FillCard(card, key, entries, chosen)
     SetLabel(card.Join, chosen and "ВЫ ЗДЕСЬ" or "ВСТУПИТЬ")
 end
 
--- state: { Subtitle, Swat = {entries}, Suspects = {entries}, SwatCount, SuspectCount, HostTeam ("swat"|"suspect"),
---          Bots, Accuracy, Minutes, Ready } where an entry is { Text, Color }.
+local function RoundsLabel(rounds)
+    if rounds == 1 then return "МАТЧ: 1 РАУНД" end
+    return string.format("МАТЧ: ДО %d ПОБЕД", rounds)
+end
+
+-- result: { Top, Winner, WinnerSide ("swat"|"suspect"), Reason, SwatScore, SuspectScore, Notice, Countdown }
+local function FillResult(page, result, final)
+    SetText(page.Top, result.Top)
+    SetText(page.Winner, result.Winner)
+    Paint(page.Winner, Teams[result.WinnerSide].Accent)
+    SetText(page.Reason, result.Reason)
+    SetText(page.Swat.Number, tostring(result.SwatScore))
+    SetText(page.Suspect.Number, tostring(result.SuspectScore))
+    Recolor(page.Swat.Box, result.WinnerSide == "swat" and Teams.swat.HeaderChosen or Teams.swat.Header)
+    Recolor(page.Suspect.Box, result.WinnerSide == "suspect" and Teams.suspect.HeaderChosen or Teams.suspect.Header)
+    SetText(page.Notice, result.Notice or "")
+    SetText(page.Countdown, result.Countdown or "")
+    for _, button in ipairs(page.RoundButtons) do Show(button, not final) end
+    Show(page.NewMatch, final)
+end
+
+-- state: { Mode ("teams"|"round"|"final"), Result (round and final pages, see FillResult), and for the
+--          team page Subtitle, Swat = {entries}, Suspects = {entries}, SwatCount, SuspectCount,
+--          HostTeam ("swat"|"suspect"), Bots, Accuracy, Minutes, RoundsToWin, Swap, Ready } where an
+--          entry is { Text, Color }.
 function M.Show(screen, state, onAction)
     if not Valid(screen) then return end
     Menu.OnAction = onAction
@@ -322,6 +420,13 @@ function M.Show(screen, state, onAction)
     Show(Menu.Page, not Menu.Hidden, Visible) -- Visible: the page takes the clicks meant for the screen under it
     if Menu.Hidden then return end
     local parts = Menu.Parts
+    local mode = state.Mode or "teams"
+    Show(parts.Teams, mode == "teams")
+    Show(parts.Result.Root, mode ~= "teams")
+    if mode ~= "teams" then
+        FillResult(parts.Result, state.Result, mode == "final")
+        return
+    end
     SetText(parts.Subtitle, state.Subtitle)
     SetText(parts.Cards.swat.Count, string.format("%d / %d", state.SwatCount, Slots))
     SetText(parts.Cards.suspect.Count, string.format("%d / %d", state.SuspectCount, Slots))
@@ -329,7 +434,9 @@ function M.Show(screen, state, onAction)
     FillCard(parts.Cards.suspect, "suspect", state.Suspects, state.HostTeam == "suspect")
     SetLabel(parts.Bots, state.Bots and "БОТЫ SWAT: ВКЛ" or "БОТЫ SWAT: ВЫКЛ")
     SetLabel(parts.Accuracy, "МЕТКОСТЬ: " .. state.Accuracy)
-    SetLabel(parts.Minutes, string.format("ВРЕМЯ: %d МИН", state.Minutes))
+    SetLabel(parts.Minutes, string.format("РАУНД: %d МИН", state.Minutes))
+    SetLabel(parts.Rounds, RoundsLabel(state.RoundsToWin))
+    SetLabel(parts.Swap, state.Swap and "СМЕНА СТОРОН: ВКЛ" or "СМЕНА СТОРОН: ВЫКЛ")
     SetLabel(parts.Ready, state.Ready and "ЖДЁМ ОСТАЛЬНЫХ" or "ГОТОВ")
 end
 

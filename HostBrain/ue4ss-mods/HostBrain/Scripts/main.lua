@@ -19,6 +19,10 @@
 --   comp_pvp_time <min> [takeover s], comp_pvp_bots <on|off> [aim], comp_pvp_status, comp_pvp_end
 --   comp_pvp_auto <on|off>      offer the team choice on every co-op pre-mission screen (default on;
 --                               bots, minutes and this are kept in settings.txt)
+--   comp_pvp_rounds [wins] [swap 0|1]
+--                               round wins that take a PvP match (default 3) and the halftime side swap
+--   comp_pvp_endround swat|suspects
+--                               end the running round for one side (testing the round flow)
 --   comp_start <map> [mode] [force]
 --                               host a PvP match (default mode: ff); from a hosted lobby it server-travels
 --                               everyone, otherwise it opens a new listen server. Unverified map/mode
@@ -159,6 +163,7 @@ local FilteredRpcs = {
     { "/Script/ReadyOrNot.ReadyOrNotCharacter:Server_Yell", 0 },
     { "/Script/ReadyOrNot.ReadyOrNotCharacter:Server_ReportToTOC", 0 },
     { "/Script/ReadyOrNot.ReadyOrNotCharacter:Server_ReportTarget", 0 },
+    { "/Script/ReadyOrNot.ReadyOrNotCharacter:Server_PlayTOCConversation", 0 },
     { "/Script/ReadyOrNot.ReadyOrNotCharacter:Server_CarryArrestedTarget", 0 },
     { "/Script/ReadyOrNot.PlayerCharacter:Server_InstaStartArrest", 0 },
     { "/Script/ReadyOrNot.PlayerCharacter:Server_GiveAIMoveTo", 0 },

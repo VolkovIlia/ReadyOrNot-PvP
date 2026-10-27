@@ -10,8 +10,11 @@
 --   * a suspect player takes an AI suspect's place at the start and, after every death, takes over
 --     another living AI suspect that no SWAT can see, while any are left; suspects carry suspect guns
 --     and clothes, no armour and no SWAT gear;
---   * SWAT win by the mission rules (every AI suspect and suspect player out, nobody left to take
---     over); suspects win by taking out every SWAT player or by holding out for the time limit;
+--   * SWAT take a round by the mission rules (every AI suspect and suspect player out, nobody left to
+--     take over); suspects take it by taking out every SWAT player or by holding out for the time limit;
+--   * a match is played in rounds, as in CS2: the round ends inside the mission (no debriefing), the
+--     same mission loads again with a result page on the host's pre-mission screen, the sides swap at
+--     halftime and the first side to Settings.RoundsToWin round wins takes the match;
 --   * with bots the mission's AI SWAT squad fights for SWAT: it follows a living SWAT player, and with
 --     none it hunts the suspect players on its own (hb_hunt), whichever side the host plays.
 --
@@ -33,12 +36,16 @@ local IsDown, Location, Distance, LivingSwat, TraceBlocked = C.IsDown, C.Locatio
 local Pvp = {}
 local Deps = {} -- from main.lua (Pvp.RegisterCommands)
 
--- Auto, Bots and Minutes are kept in the mod's settings.txt (C.SaveSetting).
+-- The menu's settings are kept in the mod's settings.txt (C.SaveSetting).
 local Saved = C.LoadSettings()
 local Settings = {
     Auto = Saved.pvp_auto ~= "0",   -- offer the team choice on every co-op mission's pre-mission screen
     Bots = Saved.pvp_bots ~= "0",   -- give SWAT the mission's AI squad
-    Minutes = tonumber(Saved.pvp_minutes or "") or 10, -- suspects win when they hold out this long
+    Minutes = tonumber(Saved.pvp_minutes or "") or 10, -- suspects win a round when they hold out this long
+    RoundsToWin = tonumber(Saved.pvp_rounds or "") or 3, -- round wins that take the match
+    Swap = Saved.pvp_swap ~= "0",   -- the players change sides at halftime, as in CS2
+    BreakSeconds = 6,    -- from a round's end to loading the next round
+    ReadyAfter = 8,      -- seconds of the round result before everyone is readied for the next round
     RespawnDelay = 10,   -- seconds from a suspect player's death to taking over an AI suspect
     SafeDistance = 1000, -- cm: an AI suspect this close to a SWAT is not taken over
     BotAccuracy = tonumber(Saved.pvp_bot_accuracy or "") or 2.0, -- AI SWAT aim penalty against suspect players (1 = normal aim)
@@ -47,7 +54,7 @@ local Settings = {
 
 local Match = {
     Active = false,
-    Phase = "idle",   -- travel, briefing (pre-mission screen), live, ended
+    Phase = "idle",   -- travel, briefing (pre-mission screen), live, roundover
     TravelFrom = nil, -- world generation the server travel started from
     World = nil,      -- world generation of the mission
     StartedAt = 0,
@@ -67,7 +74,16 @@ local Match = {
     SquadVariable = nil, -- value last set for a.RonSpawnSwatInIncompatibleMode
     SquadSeen = false, -- the AI squad spawns a little after the players
     Warned = {},
-    Winner = nil,
+    -- Rounds: every round is the same mission loaded again; the score belongs to the players on each
+    -- side and moves with them when the sides swap.
+    Round = 1,
+    Score = { Swat = 0, Suspects = 0 },
+    Result = nil,      -- the last round: { Round, SwatWon, Reason, Final, Swapped, SwatScore, SuspectScore, Winners }
+    PageMode = "teams", -- the host's page on the next pre-mission screen: teams, round (result) or final
+    BreakEnds = 0,     -- world time the next round starts loading
+    BriefedAt = nil,   -- world time the round result first showed on this pre-mission screen
+    ReadyAsked = {},   -- player name -> world time the player was last readied for the next round
+    TravelAt = 0,      -- world time of the last travel to the next round
 }
 
 ---------------------------------------------------------------- players and messages
@@ -149,8 +165,18 @@ end
 local function ResetMission()
     Match.Suspects, Match.Converts, Match.Stripped, Match.Removed = {}, {}, {}, {}
     Match.SquadSeen, Match.HostWait, Match.LastRoster, Match.LastRosterText = false, nil, -math.huge, nil
-    Match.HostConfirmed, Match.HoldTold = false, false
+    Match.HostConfirmed, Match.HoldTold, Match.BriefedAt, Match.ReadyAsked = false, false, nil, {}
     Menu.Reopen()
+end
+
+-- A new match: round 1, no score, the team page.
+local function NewMatch()
+    Match.Round, Match.Score, Match.Result, Match.PageMode = 1, { Swat = 0, Suspects = 0 }, nil, "teams"
+end
+
+local function StopMode()
+    Match.Active, Match.Phase = false, "idle"
+    NewMatch()
 end
 
 local function EnablePvpFlags()
@@ -381,16 +407,75 @@ end
 
 ---------------------------------------------------------------- match flow
 
-local function EndMatch(swatWon, reason)
-    Match.Phase = "ended"
-    Match.Winner = swatWon and "SWAT" or "подозреваемые"
-    local text = string.format("Победа %s: %s", swatWon and "SWAT" or "подозреваемых", reason)
+local function ScoreLine(swat, suspects)
+    return string.format("SWAT %d : %d Подозреваемые", swat or Match.Score.Swat, suspects or Match.Score.Suspects)
+end
+
+-- A round ends inside the mission, without the game's mission end and its debriefing: the score goes
+-- up, everyone gets the result in chat, and after a short pause the mission loads again for the next
+-- round (Pvp.Tick), where the host's pre-mission screen shows the result page.
+local function EndRound(now, players, swatWon, reason)
+    if swatWon then Match.Score.Swat = Match.Score.Swat + 1 else Match.Score.Suspects = Match.Score.Suspects + 1 end
+    local final = Match.Score.Swat >= Settings.RoundsToWin or Match.Score.Suspects >= Settings.RoundsToWin
+    -- halftime after RoundsToWin - 1 rounds, as CS2 swaps after 12 rounds of a match to 13
+    local swapped = not final and Settings.Swap and Settings.RoundsToWin > 1 and Match.Round == Settings.RoundsToWin - 1
+    local winners = {}
+    for _, player in ipairs(players) do
+        if (Match.Suspects[player.Name] and true or false) ~= swatWon then winners[#winners + 1] = player.Name end
+    end
+    Match.Result = {
+        Round = Match.Round, SwatWon = swatWon, Reason = reason, Final = final, Swapped = swapped,
+        SwatScore = Match.Score.Swat, SuspectScore = Match.Score.Suspects,
+        Winners = #winners > 0 and table.concat(winners, ", ") or (swatWon and "ИИ-отряд SWAT" or "ИИ-подозреваемые"),
+    }
+    Match.Phase, Match.BreakEnds = "roundover", now + Settings.BreakSeconds
+    local text = string.format("Раунд %d: победа %s — %s. %s", Match.Round, swatWon and "SWAT" or "подозреваемых", reason, ScoreLine())
     Say(text)
     C.Banner(text)
-    local gameMode = UEHelpers.GetGameModeBase()
-    local ended = pcall(function() gameMode:MissionEnd(swatWon) end)
-    if not ended then pcall(function() gameMode:StartMissionEndTimer(swatWon) end) end
-    Log("mission end requested (%s)", ended and "MissionEnd" or "StartMissionEndTimer")
+    if final then
+        Say(string.format("Матч окончен: победили %s (%s). %s", swatWon and "SWAT" or "подозреваемые", Match.Result.Winners, ScoreLine()))
+    elseif swapped then
+        Say("Половина матча: после этого раунда команды меняются сторонами")
+    end
+    Log("round %d over: %s won (%s), %s%s", Match.Round, swatWon and "SWAT" or "suspects", reason, ScoreLine(),
+        final and ", match over" or (swapped and ", sides swap" or ""))
+end
+
+-- The same mission again, in the same game mode, for every connected player (servertravel keeps the
+-- clients of a hosted game; a single-player game opens the level again).
+local function Travel()
+    local world = UEHelpers.GetWorld()
+    local level, mode = nil, nil
+    pcall(function() level = UEHelpers.GetGameplayStatics():GetCurrentLevelName(world, true):ToString() end)
+    pcall(function() mode = UEHelpers.GetGameModeBase().OptionsString:ToString():match("[?&]game=([^?&]+)") end)
+    mode = mode or CoopMode
+    if not level or level == "" then
+        Say("PvP: не удалось перезапустить миссию для следующего раунда — режим выключен")
+        StopMode()
+        return
+    end
+    local kismet, hosting = UEHelpers.GetKismetSystemLibrary(), false
+    pcall(function() hosting = kismet:IsServer(world) and not kismet:IsStandalone(world) end)
+    local command = string.format("%s %s?game=%s", hosting and "servertravel" or "open", level, mode)
+    Match.Phase, Match.TravelFrom, Match.TravelAt = "travel", C.Worlds.Generation, C.WorldTime()
+    Log("next round: %s", command)
+    Exec(command)
+end
+
+local function LoadNextRound(players)
+    local result = Match.Result
+    if result.Swapped then
+        for _, player in ipairs(players) do
+            local team = Match.Teams[player.Name] or (Match.Suspects[player.Name] and TeamSuspect) or TeamSwatBlue
+            Match.Teams[player.Name] = team == TeamSuspect and TeamSwatBlue or TeamSuspect
+        end
+        Match.Score.Swat, Match.Score.Suspects = Match.Score.Suspects, Match.Score.Swat
+    end
+    if not result.Final then Match.Round = Match.Round + 1 end
+    Match.PageMode = result.Final and "final" or "round"
+    -- everybody spawns as SWAT (co-op maps have no suspect starts); suspects take their AI again
+    for _, player in ipairs(players) do SetTeam(player, TeamSwatBlue) end
+    Travel()
 end
 
 local function StartLive(now, players)
@@ -398,9 +483,12 @@ local function StartLive(now, players)
     for _, player in ipairs(players) do
         if Match.Suspects[player.Name] then suspectPlayers = suspectPlayers + 1 else swatPlayers = swatPlayers + 1 end
     end
-    if suspectPlayers == 0 and not Settings.Test then
+    -- From the second round on a match goes on with the mission's AI suspects as the only suspects
+    -- (a host alone after the halftime swap plays SWAT).
+    local inMatch = Match.Round > 1
+    if suspectPlayers == 0 and not Settings.Test and not inMatch then
         if Match.Auto then Log("PvP: nobody plays a suspect, a plain co-op mission") else Say("PvP: никто не выбрал подозреваемых — идёт обычная миссия") end
-        Match.Active, Match.Phase = false, "idle"
+        StopMode()
         return
     end
     Match.Bots = Settings.Bots
@@ -409,7 +497,7 @@ local function StartLive(now, players)
     end
     if swatPlayers == 0 and not Match.Bots and not Settings.Test then
         Say("PvP: нет ни игроков SWAT, ни ботов — режим выключен")
-        Match.Active, Match.Phase = false, "idle"
+        StopMode()
         return
     end
     if not Match.Bots then
@@ -420,7 +508,7 @@ local function StartLive(now, players)
         Say("PvP: фильтр SWAT-действий не установлен — подозреваемые смогут связывать гражданских (см. лог HostBrain)")
     end
     Match.Phase, Match.StartedAt, Match.EndsAt = "live", now, now + Settings.Minutes * 60
-    Match.Deaths, Match.Warned, Match.Winner = {}, {}, nil
+    Match.Deaths, Match.Warned, Match.PageMode = {}, {}, "teams"
     H.Reset(now)
     for _, player in ipairs(players) do
         -- a suspect whose booking was lost (AI gone, ready state missed) takes over now
@@ -428,8 +516,14 @@ local function StartLive(now, players)
             Match.Deaths[player.Name] = { At = now - Settings.RespawnDelay, Told = true }
         end
     end
-    Say(string.format("PvP начался: %d мин. Подозреваемые побеждают, если положат всех SWAT или продержатся; SWAT — если нейтрализует всех подозреваемых. Убитый подозреваемый через %d с вселяется в ИИ-подозреваемого. %s",
-        Settings.Minutes, Settings.RespawnDelay, Match.Bots and "ИИ-отряд SWAT в игре." or "Без ИИ-отряда SWAT."))
+    if Match.Round == 1 then
+        Say(string.format("PvP: матч %s, раунд %d мин. Подозреваемые берут раунд, если положат всех SWAT или продержатся; SWAT — если нейтрализует всех подозреваемых. Убитый подозреваемый через %d с вселяется в ИИ-подозреваемого. %s",
+            Settings.RoundsToWin > 1 and string.format("до %d побед", Settings.RoundsToWin) or "из одного раунда",
+            Settings.Minutes, Settings.RespawnDelay, Match.Bots and "ИИ-отряд SWAT в игре." or "Без ИИ-отряда SWAT."))
+    end
+    local text = string.format("Раунд %d · %s · %d мин", Match.Round, ScoreLine(), Settings.Minutes)
+    Say(text)
+    C.Banner(text)
 end
 
 ---------------------------------------------------------------- the host's team button
@@ -488,7 +582,7 @@ local function OnSwapTeams(context)
     Match.Teams[host.Name] = team
     Say(string.format("%s → %s", host.Name, TeamName(team)))
     -- a host who changes sides after Ready chooses again in the team menu
-    Match.HostConfirmed = false
+    Match.HostConfirmed, Match.PageMode = false, "teams"
     Menu.Reopen()
     -- the game relabels the button after SwapTeams; ours goes back on top
     TeamButton.Label = nil
@@ -504,6 +598,7 @@ end
 -- (Pvp.FrameTick) until the host presses Ready.
 local function OnToggleReady()
     if not Match.Active or Match.Phase ~= "briefing" or Match.HostConfirmed then return end
+    if Match.PageMode == "final" then NewMatch() end -- Ready on the final result starts a new match
     Match.HostConfirmed = true
     Menu.Hide()
     local host = HostPlayer(Players())
@@ -539,7 +634,64 @@ end
 ---------------------------------------------------------------- the host's team menu (hb_menu)
 
 local Accuracies = { { 3.0, "НИЗКАЯ" }, { 2.0, "СРЕДНЯЯ" }, { 1.0, "ВЫСОКАЯ" } }
-local MinuteSteps = { 5, 10, 15, 20, 30 }
+local MinuteSteps = { 3, 5, 10, 15, 20, 30 }
+local RoundSteps = { 1, 2, 3, 4, 5, 8 }
+
+-- Between rounds nobody has to press Ready: once the result has been up for a while every player is
+-- readied. The host readies through its own ReadyUp (as the solo mode does; bReady follows a few
+-- seconds later, so it is asked at most every 6 s), a client on the server through
+-- ReadyOrNotPlayerController::Server_SetReadyState, which runs right there on the host.
+local function ReadyEveryone(players, now)
+    local host = UEHelpers.GetPlayerController()
+    for _, player in ipairs(players) do
+        local ready = true
+        pcall(function() ready = player.State.bReady end)
+        local asked = Match.ReadyAsked[player.Name]
+        if not ready and (not asked or now - asked >= 6) then
+            Match.ReadyAsked[player.Name] = now
+            local isHost = Valid(host) and player.Controller:GetAddress() == host:GetAddress()
+            local ok, err = pcall(function()
+                if isHost then player.Controller:ReadyUp() else player.Controller:Server_SetReadyState(true) end
+            end)
+            Log("round start: %s readied (%s)", player.Name, ok and (isHost and "ReadyUp" or "Server_SetReadyState") or tostring(err))
+        end
+    end
+end
+
+-- The round result page: who took the round, the score, what comes next.
+local function ResultState(host, now)
+    local result = Match.Result
+    local final = Match.PageMode == "final"
+    local state = {
+        Top = final and "МАТЧ ОКОНЧЕН" or string.format("РАУНД %d", result.Round),
+        Winner = result.SwatWon and "ПОБЕДА SWAT" or "ПОБЕДА ПОДОЗРЕВАЕМЫХ",
+        WinnerSide = result.SwatWon and "swat" or "suspect",
+        Reason = result.Reason,
+        SwatScore = result.SwatScore, SuspectScore = result.SuspectScore,
+    }
+    local hostTeam = TeamName(Match.Teams[host.Name] or TeamSwatBlue)
+    if final then
+        state.Reason = string.format("решающий раунд %d: %s", result.Round, result.Reason)
+        state.Notice = "Победители: " .. result.Winners
+        state.Countdown = string.format("Матч до %d побед. «Новый матч» — снова выбор команд на этой же карте", Settings.RoundsToWin)
+        return state
+    end
+    state.Notice = result.Swapped and string.format("СМЕНА СТОРОН · теперь вы за %s · %s", hostTeam, ScoreLine())
+        or string.format("Следующий раунд: вы за %s · матч до %d побед", hostTeam, Settings.RoundsToWin)
+    local gameState = UEHelpers.GetGameStateBase()
+    local everyone, left = false, nil
+    pcall(function()
+        everyone = gameState:IsEveryoneReady()
+        left = gameState.TimeTillGameStartCountdown
+    end)
+    if everyone and left then
+        state.Countdown = string.format("Раунд %d начнётся через %d с", Match.Round, math.max(0, math.ceil(left)))
+    else
+        state.Countdown = string.format("Раунд %d · автостарт через %d с", Match.Round,
+            math.max(0, math.ceil((Match.BriefedAt or now) + Settings.ReadyAfter - now)))
+    end
+    return state
+end
 
 local function AccuracyName()
     for _, level in ipairs(Accuracies) do
@@ -556,10 +708,15 @@ local function Next(list, current, key)
     return list[1]
 end
 
-local function MenuState(players, host)
+local function MenuState(players, host, now)
     local Colors = Menu.Colors
     local state = { Swat = {}, Suspects = {}, SwatCount = 0, SuspectCount = 0, Bots = Settings.Bots,
-        Accuracy = AccuracyName(), Minutes = Settings.Minutes, Ready = Match.HostConfirmed }
+        Accuracy = AccuracyName(), Minutes = Settings.Minutes, Ready = Match.HostConfirmed,
+        RoundsToWin = Settings.RoundsToWin, Swap = Settings.Swap, Mode = Match.Result and Match.PageMode or "teams" }
+    if state.Mode ~= "teams" then
+        state.Result = ResultState(host, now)
+        return state
+    end
     for _, player in ipairs(players) do
         local team = Match.Teams[player.Name] or (Match.Suspects[player.Name] and TeamSuspect) or player.Team
         local isHost = host and player.Name == host.Name
@@ -583,7 +740,11 @@ local function MenuState(players, host)
     end
     local ai = #LivingAiSuspects()
     table.insert(state.Suspects, { Text = ai > 0 and string.format("ИИ-подозреваемые · %d", ai) or "ИИ-подозреваемые миссии", Color = Colors.SuspectAi })
-    state.Subtitle = string.format("PvP · миссия %d мин · убитый подозреваемый вселяется в живого ИИ-подозреваемого", Settings.Minutes)
+    if Match.Round > 1 then
+        state.Subtitle = string.format("Раунд %d · %s · матч до %d побед", Match.Round, ScoreLine(), Settings.RoundsToWin)
+    else
+        state.Subtitle = string.format("PvP · раунд %d мин · убитый подозреваемый вселяется в живого ИИ-подозреваемого", Settings.Minutes)
+    end
     return state
 end
 
@@ -621,6 +782,23 @@ local function OnMenuAction(action)
     elseif action == "minutes" then
         Settings.Minutes = Next(MinuteSteps, Settings.Minutes)
         C.SaveSetting("pvp_minutes", Settings.Minutes)
+    elseif action == "rounds" then
+        Settings.RoundsToWin = Next(RoundSteps, Settings.RoundsToWin)
+        C.SaveSetting("pvp_rounds", Settings.RoundsToWin)
+    elseif action == "swap" then
+        Settings.Swap = not Settings.Swap
+        C.SaveSetting("pvp_swap", Settings.Swap and 1 or 0)
+    elseif action == "startnow" then
+        ReadyEveryone(players, C.WorldTime())
+    elseif action == "teams" then
+        -- back to the team page; the start waits for the host's Ready again
+        Match.PageMode, Match.HostConfirmed = "teams", false
+        Menu.Reopen()
+    elseif action == "newmatch" then
+        NewMatch()
+        Match.HostConfirmed = false
+        Menu.Reopen()
+        Say(string.format("PvP: новый матч до %d побед — выбор команд", Settings.RoundsToWin))
     elseif action == "ready" then
         local screen = TeamButton.Screen
         local ready = false
@@ -636,8 +814,10 @@ end
 ShowMenu = function(players, host)
     local screen = TeamButton.Screen
     if not host or not Valid(screen) then return end
-    if Match.HostConfirmed then Menu.Hide() end
-    Menu.Show(screen, MenuState(players, host), OnMenuAction)
+    local state = MenuState(players, host, C.WorldTime())
+    -- the team page goes once the host is ready; a round result stays up until the round starts
+    if Match.HostConfirmed and state.Mode == "teams" then Menu.Hide() end
+    Menu.Show(screen, state, OnMenuAction)
     ShowTeamButton(host)
 end
 
@@ -647,21 +827,30 @@ local function BriefingTick(now, players)
     for _, player in ipairs(players) do
         if Match.Teams[player.Name] == TeamSuspect then anySuspect = true end
     end
-    SetSquadVariable(Settings.Bots and anySuspect)
+    -- (from the second round on the match needs the squad even with only AI suspects against it)
+    SetSquadVariable(Settings.Bots and (anySuspect or Match.Round > 1))
     local host = HostPlayer(players)
     HookPreMission("SwapTeams", OnSwapTeams)
     HookPreMission("ToggleReady", OnToggleReady)
+    -- After a round the result shows and the next round starts by itself: the host counts as
+    -- confirmed and everyone is readied after Settings.ReadyAfter seconds.
+    if Match.PageMode == "round" and Match.Result then
+        Match.BriefedAt = Match.BriefedAt or now
+        Match.HostConfirmed = true
+        if now >= Match.BriefedAt + Settings.ReadyAfter then ReadyEveryone(players, now) end
+    end
     ShowTeamButton(host)
     ShowMenu(players, host)
-    if Match.LastRoster == -math.huge then
-        Say(string.format("PvP: SWAT против подозреваемых · %d мин · %s. Подозреваемые воюют вместе с ИИ-подозреваемыми и после смерти вселяются в них",
+    if Match.LastRoster == -math.huge and Match.Round == 1 then
+        Say(string.format("PvP: SWAT против подозреваемых · раунд %d мин · %s. Подозреваемые воюют вместе с ИИ-подозреваемыми и после смерти вселяются в них",
             Settings.Minutes, Settings.Bots and "ИИ-отряд SWAT в игре" or "без ИИ-отряда SWAT"))
     end
     -- the roster goes out when it changes (the host's team menu shows it all the time)
     local roster = Roster(players)
     if roster ~= Match.LastRosterText then
         Match.LastRoster, Match.LastRosterText = now, roster
-        Say(roster .. ". Выбор стороны: у хоста кнопка «Поменять команды», у остальных — чат !swat или !suspect")
+        Say(Match.Round > 1 and string.format("Раунд %d · %s", Match.Round, roster)
+            or (roster .. ". Выбор стороны: у хоста кнопка «Поменять команды», у остальных — чат !swat или !suspect"))
     end
     -- Once everyone is ready the suspects get their AI suspects booked and their spawn kit set (a
     -- player's own Ready overwrites ServerSavedLoadout, so the kit is put back while it is missing).
@@ -752,19 +941,19 @@ local function LiveTick(now, players)
     end
     if now - Match.StartedAt < 10 then return end
     if swatPlayers > 0 and swatAlive == 0 then
-        EndMatch(false, "все бойцы SWAT нейтрализованы")
+        EndRound(now, players, false, "все бойцы SWAT нейтрализованы")
     elseif swatPlayers == 0 and Match.Bots and Match.SquadSeen and squad == 0 then
-        EndMatch(false, "ИИ-отряд SWAT уничтожен")
+        EndRound(now, players, false, "ИИ-отряд SWAT уничтожен")
     elseif now >= Match.EndsAt then
-        EndMatch(false, "время вышло, подозреваемые продержались")
+        EndRound(now, players, false, "время вышло, подозреваемые продержались")
     elseif aiLeft == 0 and suspectAlive == 0 and waiting == 0 then
-        EndMatch(true, "все подозреваемые нейтрализованы")
+        EndRound(now, players, true, "все подозреваемые нейтрализованы")
     else
         local left = Match.EndsAt - now
         for _, mark in ipairs({ 300, 60 }) do
             if left <= mark and not Match.Warned[mark] and Match.EndsAt - Match.StartedAt > mark then
                 Match.Warned[mark] = true
-                Say(string.format("До конца миссии %s · ИИ-подозреваемых: %d", C.Clock(mark), aiLeft))
+                Say(string.format("До конца раунда %s · ИИ-подозреваемых: %d", C.Clock(mark), aiLeft))
             end
         end
     end
@@ -817,13 +1006,14 @@ local function AutoArm()
     Match.AutoWorld = C.Worlds.Generation
     Match.Active, Match.Auto, Match.Phase, Match.World = true, true, "briefing", C.Worlds.Generation
     Settings.Test = false
+    NewMatch()
     ResetMission()
     Log("PvP armed on the pre-mission screen (auto)")
 end
 
 -- RonCompNative drops score popups while a match runs (Deps.SetNativePvp).
 local function SyncNativePvp()
-    local on = Match.Active and (Match.Phase == "live" or Match.Phase == "ended")
+    local on = Match.Active and (Match.Phase == "live" or Match.Phase == "roundover")
     if Match.NativePvp ~= on and Deps.SetNativePvp then
         Match.NativePvp = on
         Deps.SetNativePvp(on)
@@ -836,7 +1026,14 @@ function Pvp.Tick()
     if not Match.Active then return end
     local now = C.WorldTime()
     if Match.Phase == "travel" then
-        if C.Worlds.Generation == Match.TravelFrom then return end
+        if C.Worlds.Generation == Match.TravelFrom then
+            -- a travel blocks the old world while it loads; the old world still ticking means it failed
+            if Match.TravelAt > 0 and now - Match.TravelAt > 30 then
+                Say("PvP: следующий раунд не загрузился — режим выключен")
+                StopMode()
+            end
+            return
+        end
         Match.Phase, Match.World = "briefing", C.Worlds.Generation
         ResetMission()
     end
@@ -847,7 +1044,7 @@ function Pvp.Tick()
             ResetMission()
         else
             Log("PvP: the mission was left; mode stopped")
-            Match.Active, Match.Phase = false, "idle"
+            StopMode()
             return
         end
     end
@@ -857,6 +1054,8 @@ function Pvp.Tick()
         BriefingTick(now, players)
     elseif Match.Phase == "live" then
         LiveTick(now, players)
+    elseif Match.Phase == "roundover" and now >= Match.BreakEnds then
+        LoadNextRound(players)
     end
 end
 
@@ -893,17 +1092,18 @@ end
 
 function Pvp.Stop()
     if Match.Active then SetSquadVariable(false) end
-    Match.Active, Match.Phase = false, "idle"
+    StopMode()
     SyncNativePvp()
 end
 
 function Pvp.Status(out)
-    out(string.format("PvP team choice on co-op pre-mission screens: %s, bots %s, %d min", Settings.Auto and "on" or "off",
-        Settings.Bots and "on" or "off", Settings.Minutes))
+    out(string.format("PvP team choice on co-op pre-mission screens: %s, bots %s, %d min rounds, match to %d wins, halftime swap %s",
+        Settings.Auto and "on" or "off", Settings.Bots and "on" or "off", Settings.Minutes, Settings.RoundsToWin, Settings.Swap and "on" or "off"))
     if not Match.Active and Match.Phase == "idle" then return end
     local now = C.WorldTime()
-    out(string.format("PvP: phase %s%s, bots %s, %d min, takeover after %d s, AI suspects left %d%s",
-        Match.Phase, Match.Auto and " (auto)" or "", Settings.Bots and "on" or "off", Settings.Minutes, Settings.RespawnDelay, #LivingAiSuspects(),
+    out(string.format("PvP: round %d, SWAT %d : %d suspects, phase %s%s, page %s, bots %s, takeover after %d s, AI suspects left %d%s",
+        Match.Round, Match.Score.Swat, Match.Score.Suspects, Match.Phase, Match.Auto and " (auto)" or "", Match.PageMode,
+        Settings.Bots and "on" or "off", Settings.RespawnDelay, #LivingAiSuspects(),
         Match.Phase == "live" and string.format(", %s left", C.Clock(math.max(0, math.floor(Match.EndsAt - now)))) or ""))
     out(Roster(Players()))
 end
@@ -930,6 +1130,7 @@ function Pvp.RegisterCommands(Register, deps)
         ApplySettings(parts, 2)
         C.TrackWorld()
         Match.Active, Match.Auto = true, false
+        NewMatch()
         if target == "here" then
             Match.Phase, Match.World = "briefing", C.Worlds.Generation
             ResetMission()
@@ -938,7 +1139,7 @@ function Pvp.RegisterCommands(Register, deps)
             return
         end
         local level = deps.ResolveMap(target)
-        Match.Phase, Match.TravelFrom = "travel", C.Worlds.Generation
+        Match.Phase, Match.TravelFrom, Match.TravelAt = "travel", C.Worlds.Generation, C.WorldTime()
         local kismet, world = UEHelpers.GetKismetSystemLibrary(), UEHelpers.GetWorld()
         local hosting = Valid(kismet) and Valid(world) and kismet:IsServer(world) and not kismet:IsStandalone(world)
         out(string.format("PvP on %s: %s, %d min", level, Settings.Bots and "with AI SWAT" or "no AI SWAT", Settings.Minutes))
@@ -987,6 +1188,29 @@ function Pvp.RegisterCommands(Register, deps)
             C.SaveSetting("pvp_auto", Settings.Auto and 1 or 0)
         end
         out(string.format("PvP team choice on every co-op pre-mission screen: %s", Settings.Auto and "on" or "off"))
+    end)
+    Register("comp_pvp_rounds", function(parts, out)
+        -- comp_pvp_rounds [wins] [swap 0|1]
+        local wins, swap = tonumber(parts[1] or ""), parts[2]
+        if wins and wins >= 1 then
+            Settings.RoundsToWin = math.floor(wins)
+            C.SaveSetting("pvp_rounds", Settings.RoundsToWin)
+        end
+        if swap then
+            Settings.Swap = swap ~= "0" and swap:lower() ~= "off"
+            C.SaveSetting("pvp_swap", Settings.Swap and 1 or 0)
+        end
+        out(string.format("PvP match to %d round wins, halftime swap %s", Settings.RoundsToWin, Settings.Swap and "on" or "off"))
+    end)
+    Register("comp_pvp_endround", function(parts, out)
+        -- comp_pvp_endround swat|suspects: ends the running round (testing the round flow)
+        if not Match.Active or Match.Phase ~= "live" then
+            out("no PvP round is running")
+            return
+        end
+        local swatWon = (parts[1] or ""):lower() == "swat"
+        EndRound(C.WorldTime(), Players(), swatWon, "раунд завершён хостом")
+        out(string.format("round %d ended: %s", Match.Result.Round, swatWon and "SWAT" or "suspects"))
     end)
     Register("comp_pvp_status", function(_, out) Pvp.Status(out) end)
     Register("comp_pvp_end", function(_, out)
