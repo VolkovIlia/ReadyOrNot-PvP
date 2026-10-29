@@ -884,6 +884,43 @@ Result (0.4.0-alpha):
 - Testing note: teleporting AI characters next to the player from UE4SS Lua and then calling `OnYellExecute` or
   `Server_Yell` crashed UE4SS three times (access violation in `UE4SS.dll+0x2aee57`).
 
+## Round end and gun pickups (29.10.2026)
+
+Reports: the end of a round "hangs", and a suspect who picks up a gun plays the evidence animation and gets
+evidence, not the gun. Checked on Penthouse with RonCompProbe.
+
+Observation:
+- **Round end.** `servertravel` after the 6 s break kept the last frame of the round on screen until the next world
+  had loaded. The game's own pieces for this:
+  - `PlayerController.ClientSetCameraFade(true, black, (0, 1), time, bFadeAudio, bHold)`: a reliable client RPC,
+    so it reaches a client without the pak; the fade darkens the 3D picture, UMG stays on top;
+  - `ReadyOrNotPlayerController.Client_CreateLoadingScreen(Map, Mode, SessionName, bIsSeamlessTravel)`: the game's
+    `W_LoadingScreen_C` (the mission's name, its time and score, then a tip and a progress bar). It stays through
+    the travel and leaves by itself in the new world (`OnStreamedLevelLoadedRemovingLoadingScreen`).
+
+  Checked: brightness of the host's picture 25 of 255 one second before the load, 5 at 0.2 s; the loading screen
+  came up 6 s after the round end and left 2 s after the pre-mission screen appeared.
+- **Evidence collection** (since the game's evidence update):
+  - a player holding the use key sends `Server_Interact(gun, InteractableComponent)`; a dropped AI gun has no
+    `EvidenceInteractableComponent`, its plain `Interactable Component` is used;
+  - `ReadyOrNotCharacter::BeginEvidenceCollection_COOP` (`0x144e5de80`) lowers the held item, sets
+    `bIsCollectingEvidence`, marks the interactable and starts a timer; `EvidenceComponent.bIsBeingCollected`,
+    `CollectingCharacter` and `CurrentCollectionTime` / `MaxCollectionTime` (1.43 s for a dropped gun) show the
+    progress on the server;
+  - when it is done the evidence is `Collected` and, with `bPackageOnCollection`, a
+    `BP_CollectedEvidenceActor_C` (an evidence bag) lies about 1 m from the player; the gun itself stays on the
+    floor;
+  - `EndEvidenceCollection_COOP(InteractableComponent)` (`0x144e650a0`) breaks a collection off: the animation
+    stops, the held item comes up again, the timer is cleared.
+
+Result (0.4.1-alpha):
+- `PvPDirector.BreakTick`: 1.5 s before the break ends every player gets the camera and audio fade, at its end the
+  game's loading screen, 0.3 s later the travel.
+- `PvPDirector.WatchPickup` (every 0.1 s): as soon as a suspect player is collecting a gun, the collection is broken
+  off, the evidence fields are reset, the gun goes into the kit and is drawn, and the floor gun is destroyed.
+  Checked: collection broken off within 0.25 s, the P250 of a killed AI suspect in the host's hands 1 s after the
+  key, no gun on the floor, no evidence bag.
+
 ## Lobby limit: 5 → 10 (26.10.2026)
 
 Observation (decompilation, checking the value in game):

@@ -19,15 +19,15 @@ SUSPECT = 3
 # for the suspects (rifles for suspect players, the AI squad in a SWAT player's default Kevlar)
 RULES_VANILLA = 0
 RULES_BALANCED = 1
-# EEvidenceActorState::Collected
-EVIDENCE_COLLECTED = 1
 SQUAD = 5
 SLOT = "RoNPvP"
-VERSION = "0.4.0-alpha"
+VERSION = "0.4.1-alpha"
 COOP_MODE = "BS_COOP"
 RESPAWN_DELAY = 10.0
 SAFE_DISTANCE = 1000.0
 BREAK_SECONDS = 6.0
+# the last seconds of the break fade the picture and the sound to black before the mission loads again
+FADE_SECONDS = 1.5
 READY_AFTER = 8.0
 HEAR_RANGE = 4000.0
 HINT_AFTER = 30.0
@@ -167,9 +167,6 @@ class PvPDirector(Actor):
     Stripped: List[Actor]
     LockedDoors: List[Door]
     DoorsReady: bool
-    PickupBy: Map[Actor, ReadyOrNotCharacter]
-    PickupPath: Map[Actor, str]
-    PickupEvidence: Map[Actor, EvidenceComponent]
     PickupAt: float
     ReportsSeen: List[Actor]
     DoorsAt: float
@@ -187,6 +184,9 @@ class PvPDirector(Actor):
     StartedAt: float
     EndsAt: float
     BreakEnds: float
+    BreakFaded: bool
+    BreakLoading: bool
+    LoadAt: float
     Warned300: bool
     Warned60: bool
     Bound: List[Object]
@@ -1431,28 +1431,35 @@ class PvPDirector(Actor):
         return self.WeaponPath(target)
 
     def WatchPickup(self, actor: Actor, evidence: EvidenceComponent):
-        """Notes a suspect player collecting a gun (EvidenceComponent.CollectingCharacter, known on the server),
-        forgets a collection broken off."""
-        if evidence.bIsBeingCollected:
-            collector = evidence.CollectingCharacter
-            if collector and not (actor in self.PickupBy) and collector.DefaultTeam == SUSPECT \
-                    and cast(collector.Controller, ReadyOrNotPlayerController):
-                path = self.PickupTarget(actor)
-                if path != "":
-                    self.PickupBy[actor] = collector
-                    self.PickupPath[actor] = path
-                    self.PickupEvidence[actor] = evidence
-        elif actor in self.PickupBy and evidence.GetEvidenceState() != EVIDENCE_COLLECTED:
-            self.PickupBy.remove(actor)
-            self.PickupPath.remove(actor)
-            self.PickupEvidence.remove(actor)
+        """A suspect player who starts collecting a gun (EvidenceComponent.CollectingCharacter, known on the server)
+        takes it at once. Left alone the game plays its bagging animation for 1.4 s, leaves the gun on the floor and
+        puts an evidence bag next to it; so the collection is broken off (EndEvidenceCollection_COOP: the
+        animation stops, the held gun comes up again), the gun is drawn from the kit and the floor gun goes."""
+        if not evidence.bIsBeingCollected:
+            return
+        collector = evidence.CollectingCharacter
+        if not collector or collector.DefaultTeam != SUSPECT or not cast(collector.Controller, ReadyOrNotPlayerController):
+            return
+        path = self.PickupTarget(actor)
+        if path == "":
+            return
+        interactable = evidence.EvidenceInteractableComponent
+        if not interactable:
+            interactable = cast(actor.GetComponentByClass(InteractableComponent), InteractableComponent)
+        collector.EndEvidenceCollection_COOP(interactable)
+        evidence.bIsBeingCollected = False
+        evidence.CollectingCharacter = None
+        evidence.CurrentCollectionTime = 0.0
+        if not self.IsDown(collector):
+            self.GrantGun(collector, path)
+        actor.K2_DestroyActor()
 
     def PickupTick(self, now: float):
-        """A suspect player who collects a gun as evidence (holds the use key on it: a dropped gun or a gun lying
-        as mission evidence) gets the gun instead, once the collection is done."""
+        """A suspect player who starts collecting a gun as evidence (holds the use key on it: a dropped gun or a
+        gun lying as mission evidence) takes the gun instead (WatchPickup)."""
         if now < self.PickupAt:
             return
-        self.PickupAt = now + 0.2
+        self.PickupAt = now + 0.1
         for actor in GetAllActorsOfClass(BaseMagazineWeapon):
             gun = cast(actor, BaseMagazineWeapon)
             if gun and gun.EvidenceComponent:
@@ -1462,19 +1469,6 @@ class PvPDirector(Actor):
             if prop and prop.EvidenceComponent:
                 self.WatchPickup(actor, prop.EvidenceComponent)
         self.ReportedGuns()
-        done: List[Actor] = []
-        for actor in self.PickupBy:
-            evidence = self.PickupEvidence[actor]
-            if not IsValid(actor) or not IsValid(evidence) or evidence.GetEvidenceState() == EVIDENCE_COLLECTED:
-                done.append(actor)
-        for actor in done:
-            pawn = self.PickupBy[actor]
-            path = self.PickupPath[actor]
-            self.PickupBy.remove(actor)
-            self.PickupPath.remove(actor)
-            self.PickupEvidence.remove(actor)
-            if pawn and not self.IsDown(pawn):
-                self.GrantGun(pawn, path)
 
     def GrantGun(self, pawn: ReadyOrNotCharacter, path: str):
         """The picked-up gun takes its slot in the suspect kit; the other gun stays."""
@@ -2063,6 +2057,8 @@ class PvPDirector(Actor):
         st.ResultWinners = winners
         st.Phase = "roundover"
         self.BreakEnds = now + BREAK_SECONDS
+        self.BreakFaded = False
+        self.BreakLoading = False
         side = "SWAT" if swat_won else self.L("подозреваемых", "the suspects")
         self.Banner(self.L(f"Раунд {st.Round} — победа {side} — {self.ScoreLine()}", f"Round {st.Round} — {side} win — {self.ScoreLine()}"))
         self.Remote(self.L(f"Раунд {st.Round}: победа {side} — {reason}. {self.ScoreLine()}",
@@ -2073,10 +2069,30 @@ class PvPDirector(Actor):
             self.Announce(self.L("Половина матча: после этого раунда команды меняются сторонами",
                                  "Half time: the teams swap sides after this round"))
 
-    def Travel(self):
-        """The same mission again in the same game mode for every connected player (servertravel keeps a
-        hosted game's clients; single player opens the level again)."""
-        level = GetCurrentLevelName(True)
+    def BreakTick(self, now: float):
+        """The break after a round ends the way the game starts a mission: the picture and the sound fade to black,
+        the game's loading screen comes up for every player, and the mission loads behind it. Both are the game's
+        own client calls, so a client without the pak gets them too. Before, the last frame of the round stood
+        still until the next one had loaded."""
+        if not self.BreakFaded and now >= self.BreakEnds - FADE_SECONDS:
+            self.BreakFaded = True
+            for pc in self.Players():
+                pc.ClientSetCameraFade(True, Color(R=0, G=0, B=0, A=255), Vector2D(X=0.0, Y=1.0), FADE_SECONDS, True, True)
+        if now < self.BreakEnds:
+            return
+        if not self.BreakLoading:
+            self.BreakLoading = True
+            # the loading screen goes out first: the travel follows it on the same reliable channel
+            self.LoadAt = now + 0.3
+            level = GetCurrentLevelName(True)
+            mode = self.TravelMode()
+            for pc in self.Players():
+                pc.Client_CreateLoadingScreen(level, mode, "", False)
+        elif now >= self.LoadAt:
+            self.LoadNextRound(self.Players())
+
+    def TravelMode(self) -> str:
+        """The mission's game mode from the travel URL (?game=BS_COOP)."""
         mode = COOP_MODE
         mode_found, before, after = Split(GetGameMode().OptionsString, "game=", 1, 0)
         if mode_found:
@@ -2084,6 +2100,13 @@ class PvPDirector(Actor):
             cut, head, tail = Split(after, "?", 1, 0)
             if cut:
                 mode = head
+        return mode
+
+    def Travel(self):
+        """The same mission again in the same game mode for every connected player (servertravel keeps a
+        hosted game's clients; single player opens the level again)."""
+        level = GetCurrentLevelName(True)
+        mode = self.TravelMode()
         if level == "":
             self.Announce(self.L("PvP: не удалось перезапустить миссию для следующего раунда — режим выключен",
                                  "PvP: the mission could not be restarted for the next round — the mode is off"))
@@ -2245,8 +2268,6 @@ class PvPDirector(Actor):
             self.BriefingTick(now, players)
         elif st.Phase == "live":
             self.LiveTick(now, players)
-        elif st.Phase == "roundover" and now >= self.BreakEnds:
-            self.LoadNextRound(players)
 
     def FastTick(self):
         if not self.Server or not self.State.Active:
@@ -2260,6 +2281,8 @@ class PvPDirector(Actor):
             self.PickupTick(now)
             self.SuspectDoors(now)
             self.TrackTick(now)
+        elif self.State.Phase == "roundover":
+            self.BreakTick(now)
         if len(self.ConvertAi) == 0:
             return
         for pc in self.Players():

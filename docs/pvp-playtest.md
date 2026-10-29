@@ -105,7 +105,7 @@ After the game, send these files from the host's machine:
   approximate time.
 - 20–30 minutes of play without crashes. If someone crashed: the time and what was happening.
 
-## Mods-menu version 0.4.0: what needs a friend
+## Mods-menu version 0.4: what needs a friend
 
 The host and the friend both subscribe to the mod (the friend may instead turn on "Join modded servers"; then the
 items marked "with the pak" do not apply).
@@ -127,3 +127,7 @@ items marked "with the pak" do not apply).
    "+N" or objective popup.
 9. **Views keep to one's own side** (with the pak): the friend as SWAT cannot open the host's helmet camera while the
    host plays a suspect; killed, the friend's spectator view does not stay on the host.
+10. **Round end for the friend** (without the pak too): the picture and the sound fade to black 4.5 s after the
+    round result, then the game's loading screen shows until the next mission's pre-mission screen.
+11. **Gun pickup for the friend as a suspect:** holding the use key on a dropped gun draws it at once (no bagging
+    animation, no evidence bag), and the gun leaves the floor for the host too.

@@ -127,7 +127,8 @@ together with the AI suspects against the AI SWAT squad, and after the side swap
   squad) or the round time runs out.
 - **Rounds.**
   - A round ends inside the mission, without the standard debriefing screen: the host gets the result as the game's
-    objective popup, clients in chat, and the mission reloads 6 s later.
+    objective popup, clients in chat. 6 s later the picture and the sound fade to black, the game's loading screen
+    comes up and the mission loads again.
   - Sides swap after round N−1 (after the second round in a match to 3 wins); the score moves with the players.
 - **A suspect** spawns in place of a random AI suspect, and that AI leaves the mission.
   - Weapons are the player versions of the AI's guns (AKM → SLR-47, G3 → FAL, Calico → MP5, Makarov → M92, and so
@@ -152,8 +153,9 @@ together with the AI suspects against the AI SWAT squad, and after the side swap
   closed, and a dead player's spectator view moves on to their own side (this needs the mod on the player's machine).
 - **Doors.** Suspects open any door, locked ones too (the game's own `Door.bSuspectAlwaysUnlocks` rule). A door
   that was locked locks again when a suspect closes it; SWAT still have to pick, breach or kick it.
-- **Dropped guns.** A suspect who collects a dropped gun as evidence (holds the use key on it) gets the gun instead:
-  a SWAT gun as it is, an AI suspect's gun as its player version. It takes the place of the primary or the pistol.
+- **Dropped guns.** A suspect who starts collecting a dropped gun as evidence (holds the use key on it) takes the
+  gun at once instead: a SWAT gun as it is, an AI suspect's gun as its player version. It takes the place of the
+  primary or the pistol and is drawn; the gun leaves the floor and no evidence bag appears.
 - **The AI SWAT squad** keeps its own ceramic and steel plates under vanilla rules; no round in the game penetrates
   them in the torso. Under balanced rules it wears the default SWAT player armour (Kevlar). Bots have more health
   than players either way (250 vs 160).

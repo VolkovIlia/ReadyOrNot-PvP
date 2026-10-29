@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.1-alpha — 29.10.2026
+
+- **A round ends the way the game starts a mission.** The last 1.5 s of the 6 s break fade the picture and the sound
+  to black, then the game's own loading screen comes up for every player while the mission loads again. Before, the
+  last frame of the round stood still until the next one had loaded. Both are the game's own client calls, so a
+  friend without the mod gets them too.
+- **Picking up a gun is a pickup, not evidence collection.** Since the game's evidence update a collected gun stays
+  on the floor and an evidence bag appears next to it, after a 1.4 s bagging animation; the mod handed over the gun
+  only after that. Now the collection is broken off as soon as a suspect player starts it: the gun is drawn at
+  once, the floor gun goes, and no bag appears.
+
 ## 0.4.0-alpha — 28.10.2026
 
 - **Scoreboard on Tab** during a PvP round, over the mission journal:
